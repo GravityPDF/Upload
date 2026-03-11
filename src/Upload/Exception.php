@@ -19,7 +19,7 @@ class Exception extends RuntimeException
      * @param string $message The Exception message
      * @param FileInfoInterface|null $fileInfo The related file instance
      */
-    public function __construct($message, FileInfoInterface $fileInfo = null)
+    public function __construct($message, ?FileInfoInterface $fileInfo = null)
     {
         $this->fileInfo = $fileInfo;
 

@@ -77,7 +77,7 @@ class FileInfo extends SplFileInfo implements FileInfoInterface
      * @param string $filePathname Absolute path to uploaded file on disk
      * @param string|null $newName Desired file name (with extension) of uploaded file
      */
-    final public function __construct(string $filePathname, string $newName = null)
+    final public function __construct(string $filePathname, ?string $newName = null)
     {
         $desiredName = is_null($newName) ? $filePathname : $newName;
         $this->setNameWithExtension($desiredName);
@@ -90,7 +90,7 @@ class FileInfo extends SplFileInfo implements FileInfoInterface
         static::$factory = $callable;
     }
 
-    public static function createFromFactory(string $tmpName, string $name = null): FileInfoInterface
+    public static function createFromFactory(string $tmpName, ?string $name = null): FileInfoInterface
     {
         if (is_callable(static::$factory)) {
             $result = call_user_func(static::$factory, $tmpName, $name);
@@ -336,11 +336,14 @@ class FileInfo extends SplFileInfo implements FileInfoInterface
      */
     public function getDimensions(): array
     {
-        [$width, $height] = (array)getimagesize($this->getPathname());
+        $imageSize = getimagesize($this->getPathname());
+        if (!$imageSize) {
+            $imageSize = [0,0];
+        }
 
         return [
-            'width' => $width ?? 0,
-            'height' => $height ?? 0,
+            'width' => $imageSize[0],
+            'height' => $imageSize[1],
         ];
     }
 
