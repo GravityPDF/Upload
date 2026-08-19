@@ -42,14 +42,18 @@
     }
   },
   "scripts": {
-    "check-syntax": "@php ./vendor/bin/parallel-lint --exclude .git --exclude vendor --exclude tools .",
-    "lint": "@php ./vendor/bin/phpcs --standard=PSR12 ./src/ ./tests/",
-    "lint:fix": "@php ./vendor/bin/phpcbf --standard=PSR12 ./src/ ./tests/",
+    "check-syntax": "@php ./vendor/bin/parallel-lint --exclude .git --exclude vendor --exclude tools/phpstan/vendor --exclude tools/psr7-readme/vendor .",
+    "lint": "@php ./vendor/bin/phpcs --standard=PSR12 ./src/ ./tests/ ./tools/psr7-readme/verify.php",
+    "lint:fix": "@php ./vendor/bin/phpcbf --standard=PSR12 ./src/ ./tests/ ./tools/psr7-readme/verify.php",
     "phpstan": [
       "@composer install --working-dir=tools/phpstan --no-interaction --quiet",
       "@php tools/phpstan/vendor/bin/phpstan analyse"
     ],
-    "phpunit": "@php ./vendor/bin/phpunit"
+    "phpunit": "@php ./vendor/bin/phpunit",
+    "psr7-readme": [
+      "@composer install --working-dir=tools/psr7-readme --no-interaction --quiet",
+      "@php tools/psr7-readme/verify.php"
+    ]
   },
   "replace": {
     "codeguy/upload": "1.3.2"

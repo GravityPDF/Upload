@@ -267,3 +267,8 @@ Each of these is listed in full in the [changelog](CHANGELOG.md).
 * A `$_FILES` entry that isn't one of the two shapes the SAPI builds is reported through
   `getErrors()` rather than warning or raising a `TypeError`. Only relevant if something
   other than the SAPI populates `$_FILES`.
+* Nothing to change, but new: `FileList` takes `FileInfoInterface` objects directly, so
+  feeding the library from PSR-7, a worker runtime or a test no longer means faking
+  `$_FILES`. Two things are yours to answer there, neither a default — override
+  `FileInfo::isUploadedFile()`, and call `FileSystem::acceptFilesNotUploadedByPhp()`. See
+  [Uploads from another source](README.md#uploads-from-another-source).

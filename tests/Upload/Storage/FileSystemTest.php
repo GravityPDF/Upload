@@ -195,6 +195,57 @@ class FileSystemTest extends TestCase
     }
 
     /**
+     * The refusal that matters to whoever owns the file at the far end: a link already standing
+     * at the destination, pointing at a real file outside the upload directory. The upload is
+     * refused, that file still holds what it held, and the link is left as it was found — it
+     * was not this upload's to create, so it is not this upload's to remove.
+     *
+     * `testRefusesToWriteThroughASymlink()` covers the same refusal against a dangling link,
+     * where there is no victim to assert about. Both `overwrite` settings, because they take
+     * different routes to the write and only one of them reserves the name first.
+     *
+     * @dataProvider providerOverwriteSettings
+     */
+    public function testWillNotWriteThroughASymlinkOntoAnExistingFile(bool $overwrite): void
+    {
+        $workingDirectory = $this->makeWorkingDirectory();
+
+        $victim = dirname($workingDirectory) . '/victim.txt';
+        file_put_contents($victim, 'the file someone else owns');
+
+        $link = $workingDirectory . '/upload.txt';
+        symlink($victim, $link);
+
+        $storage = $this->makeStorage($workingDirectory, $overwrite);
+
+        try {
+            $storage->upload($this->makeHostileFileInfo('upload.txt'));
+            $this->fail('Expected the symlinked destination to be refused');
+        } catch (Exception $e) {
+            $this->assertSame('Destination is a symbolic link', $e->getMessage());
+        }
+
+        $this->assertStringEqualsFile($victim, 'the file someone else owns');
+        $this->assertTrue(is_link($link));
+        $this->assertSame($victim, readlink($link));
+
+        /* Nothing else was written on the way to the refusal — no staging file, no placeholder */
+        $this->assertSame(['upload.txt'], $this->entriesIn($workingDirectory));
+
+        @unlink($link);
+        @unlink($victim);
+    }
+
+    /** @return array<string, array{0: bool}> */
+    public function providerOverwriteSettings(): array
+    {
+        return [
+            'overwrite off' => [false],
+            'overwrite on' => [true],
+        ];
+    }
+
+    /**
      * `x` mode resolves the path through PHP's stream layer, so it follows a dangling symlink
      * and creates the target. The inode comparison is what catches that.
      */
@@ -698,6 +749,224 @@ class FileSystemTest extends TestCase
         return substr(sprintf('%o', fileperms($path)), -4);
     }
 
+    /********************************************************************************
+     * Files PHP did not receive as uploads
+     *******************************************************************************/
+
+    /**
+     * `move_uploaded_file()` refuses any source not in PHP's own register of files this
+     * request received, which is what makes the default safe — and what a `FileList` on
+     * PSR-7 or a worker runtime runs into. Unmocked on purpose: the seam every other test
+     * here stubs is exactly the thing under test.
+     */
+    public function testRefusesAFileThatPhpDidNotReceiveAsAnUploadByDefault(): void
+    {
+        $workingDirectory = $this->makeWorkingDirectory();
+        $source = $this->makeTmpFile();
+
+        $storage = new FileSystem($workingDirectory);
+
+        $this->assertFalse($storage->acceptsFilesNotUploadedByPhp());
+
+        try {
+            $storage->upload(new FileInfo($source, 'upload.txt'));
+            $this->fail('Expected a file PHP never received to be refused');
+        } catch (Exception $e) {
+            $this->assertSame('File could not be moved to final destination.', $e->getMessage());
+        }
+
+        /* Neither the file nor the staging entry nor the reservation placeholder */
+        $this->assertSame([], $this->entriesIn($workingDirectory));
+        $this->assertFileExists($source);
+    }
+
+    /** The opt-out, and the whole of it: everything else about the write is unchanged */
+    public function testStoresAFileNotUploadedByPhpOnceTheCallerAllowsIt(): void
+    {
+        $workingDirectory = $this->makeWorkingDirectory();
+        $source = $this->makeTmpFile();
+
+        $storage = $this->makeAcceptingStorage($workingDirectory);
+
+        $this->assertTrue($storage->acceptsFilesNotUploadedByPhp());
+
+        $stored = $storage->upload(new FileInfo($source, 'upload.txt'));
+
+        $this->assertSame($workingDirectory . '/upload.txt', $stored);
+        $this->assertStringEqualsFile($stored, 'tmp file bytes');
+        $this->assertSame('0640', $this->modeOf($stored));
+
+        /* A move, not a copy: the caller's tmp file is consumed */
+        $this->assertFileDoesNotExist($source);
+        $this->assertSame(['upload.txt'], $this->entriesIn($workingDirectory));
+    }
+
+    /**
+     * The opt-in authorises a source the SAPI did not write. It does not authorise anything
+     * about the destination, so the refusals that make the write safe still hold.
+     */
+    public function testAFileNotUploadedByPhpStillCannotBeWrittenThroughASymlink(): void
+    {
+        $workingDirectory = $this->makeWorkingDirectory();
+        $target = dirname($workingDirectory) . '/target.txt';
+        symlink($target, $workingDirectory . '/upload.txt');
+
+        $storage = $this->makeAcceptingStorage($workingDirectory, true);
+
+        $this->expectException(Exception::class);
+        $this->expectExceptionMessage('Destination is a symbolic link');
+
+        $storage->upload(new FileInfo($this->makeTmpFile(), 'upload.txt'));
+    }
+
+    /** @dataProvider providerBlockedForAnyOrigin */
+    public function testAFileNotUploadedByPhpStillMeetsTheDenyList(string $name, string $message): void
+    {
+        $workingDirectory = $this->makeWorkingDirectory();
+
+        $storage = $this->makeAcceptingStorage($workingDirectory);
+
+        $this->expectException(Exception::class);
+        $this->expectExceptionMessage($message);
+
+        $storage->upload($this->makeHostileFileInfo($name));
+    }
+
+    /** @return array<string, array{0: string, 1: string}> */
+    public function providerBlockedForAnyOrigin(): array
+    {
+        return [
+            'a blocked extension' => ['evil.php', 'Files with the extension "php" cannot be stored'],
+            'a reserved device name' => ['con.txt', 'Invalid destination file name'],
+        ];
+    }
+
+    /**
+     * The container layout, against two real file systems: the tmp directory on one, the
+     * upload directory on the other. `rename(2)` fails with `EXDEV` between them — PHP's own
+     * plain-files wrapper absorbs that and copies, so this passes through `rename()` rather
+     * than through the fallback below, which is the point of having it. Either way the file
+     * has to arrive and the source has to be consumed.
+     *
+     * Skipped where the runner has no second file system to use. `/dev/shm` is a tmpfs on
+     * Linux, which covers CI; set `UPLOAD_TEST_OTHER_FS` to a writable directory on another
+     * mount to run it anywhere else (macOS: `hdiutil attach -nomount ram://8192` then
+     * `diskutil erasevolume HFS+ UPLOADTMP <disk>`).
+     */
+    public function testStoresAFileFromAnotherFileSystem(): void
+    {
+        $otherFileSystem = $this->otherFileSystemDirectory();
+
+        if ($otherFileSystem === null) {
+            $this->markTestSkipped('No second file system available; set UPLOAD_TEST_OTHER_FS');
+        }
+
+        $workingDirectory = $this->makeWorkingDirectory();
+        $source = $otherFileSystem . '/upload-' . uniqid('', true) . '.txt';
+        file_put_contents($source, 'bytes from another file system');
+
+        $sourceStat = stat($source);
+        $destinationStat = stat($workingDirectory);
+
+        $this->assertIsArray($sourceStat);
+        $this->assertIsArray($destinationStat);
+        $this->assertNotSame($sourceStat['dev'], $destinationStat['dev']);
+
+        $storage = $this->makeAcceptingStorage($workingDirectory);
+
+        try {
+            $stored = $storage->upload(new FileInfo($source, 'upload.txt'));
+
+            $this->assertSame($workingDirectory . '/upload.txt', $stored);
+            $this->assertStringEqualsFile($stored, 'bytes from another file system');
+            $this->assertSame('0640', $this->modeOf($stored));
+            $this->assertFileDoesNotExist($source);
+            $this->assertSame(['upload.txt'], $this->entriesIn($workingDirectory));
+        } finally {
+            @unlink($source);
+        }
+    }
+
+    /**
+     * A writable directory on a file system other than the one the scratch directories are on,
+     * or null if this runner has none
+     */
+    protected function otherFileSystemDirectory(): ?string
+    {
+        $candidate = getenv('UPLOAD_TEST_OTHER_FS');
+        $candidates = is_string($candidate) && $candidate !== '' ? [$candidate] : ['/dev/shm'];
+
+        foreach ($candidates as $directory) {
+            if (!is_dir($directory) || !is_writable($directory)) {
+                continue;
+            }
+
+            $here = stat(sys_get_temp_dir());
+            $there = stat($directory);
+
+            if ($here !== false && $there !== false && $here['dev'] !== $there['dev']) {
+                return rtrim($directory, '/');
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The copy behind `rename()`, for a source PHP's own rename cannot take: here one behind a
+     * stream wrapper, which is what is left once its plain-files EXDEV handling is accounted
+     * for (see the test above). Also the other half of that branch — a source the move cannot
+     * unlink afterwards must not fail an upload whose bytes are already at the destination.
+     */
+    public function testCopiesTheFileWhenItCannotBeRenamedAcrossFileSystems(): void
+    {
+        $workingDirectory = $this->makeWorkingDirectory();
+
+        $fileInfo = $this->makeHostileFileInfo(
+            'upload.txt',
+            'data://text/plain;base64,' . base64_encode('tmp file bytes')
+        );
+
+        $stored = $this->makeAcceptingStorage($workingDirectory)->upload($fileInfo);
+
+        $this->assertSame($workingDirectory . '/upload.txt', $stored);
+        $this->assertStringEqualsFile($stored, 'tmp file bytes');
+        $this->assertSame('0640', $this->modeOf($stored));
+
+        /* The staging entry is gone: the copy went there, and the rename onto the destination
+           is what finished the job */
+        $this->assertSame(['upload.txt'], $this->entriesIn($workingDirectory));
+    }
+
+    /** Both routes to the staging path fail when there is nothing to move */
+    public function testAMissingSourceIsReportedRatherThanHalfWritten(): void
+    {
+        $workingDirectory = $this->makeWorkingDirectory();
+
+        $storage = $this->makeAcceptingStorage($workingDirectory);
+
+        $this->expectException(Exception::class);
+        $this->expectExceptionMessage('File could not be moved to final destination.');
+
+        try {
+            $storage->upload(new FileInfo($workingDirectory . '/never-written.txt', 'gone.txt'));
+        } finally {
+            $this->assertSame([], $this->entriesIn($workingDirectory));
+        }
+    }
+
+    /**
+     * A file standing in for one a caller's own bridge wrote to a tmp directory. Written
+     * outside the assets directory because storing it is a *move*, and the assets are fixtures.
+     */
+    protected function makeTmpFile(): string
+    {
+        $source = $this->makeWorkingDirectory() . '/tmp-source.txt';
+        file_put_contents($source, 'tmp file bytes');
+
+        return $source;
+    }
+
     /**
      * @return string[]
      */
@@ -765,16 +1034,29 @@ class FileSystemTest extends TestCase
      * Returns whatever name it is given, standing in for a third-party implementation that
      * does none of `FileInfo`'s sanitizing.
      */
-    protected function makeHostileFileInfo(string $name): FileInfo
+    protected function makeHostileFileInfo(string $name, ?string $pathname = null): FileInfo
     {
+        $methods = $pathname === null ? ['getNameWithExtension'] : ['getNameWithExtension', 'getPathname'];
+
         $fileInfo = $this->getMockBuilder(FileInfo::class)
             ->setConstructorArgs([$this->assetsDirectory . '/foo.txt', 'foo.txt'])
-            ->onlyMethods(['getNameWithExtension'])
+            ->onlyMethods($methods)
             ->getMock();
 
         $fileInfo->method('getNameWithExtension')->willReturn($name);
 
+        if ($pathname !== null) {
+            /* A source `rename()` cannot take, for the copy behind it */
+            $fileInfo->method('getPathname')->willReturn($pathname);
+        }
+
         return $fileInfo;
+    }
+
+    /** Storage told to accept files PHP did not receive, which six tests here need */
+    protected function makeAcceptingStorage(string $directory, bool $overwrite = false): FileSystem
+    {
+        return (new FileSystem($directory, $overwrite))->acceptFilesNotUploadedByPhp();
     }
 
     /**

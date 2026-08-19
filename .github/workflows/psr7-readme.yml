@@ -1,0 +1,43 @@
+name: README PSR-7 bridge
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# The workflows only read the repository; nothing needs a write-capable GITHUB_TOKEN.
+permissions:
+  contents: read
+
+# Cancels all previous workflow runs for pull requests that have not completed.
+concurrency:
+  # The concurrency group contains the workflow name and the branch name for pull requests
+  # or the commit hash for any other events.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: true
+
+# The README tells a PSR-7 caller to write a bridge, so that code has to keep working. This runs
+# the README's own snippets — read out of the file, not copied — against two real PSR-7
+# implementations. Their versions live in tools/psr7-readme/composer.json so the library itself
+# continues to require nothing but ext-fileinfo.
+jobs:
+  run:
+    name: PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The ends of the supported range: the documented code has to run on both
+        php: [ '7.3', '8.5' ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.0
+
+      - name: Install PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.35.5
+        with:
+          php-version: ${{ matrix.php }}
+
+      - name: Run the README's PSR-7 bridge
+        run: composer psr7-readme

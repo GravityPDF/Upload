@@ -124,6 +124,12 @@ class FileSystem implements StorageInterface
     protected $mode;
 
     /**
+     * May this store a file PHP did not receive as an upload?
+     * @var bool
+     */
+    protected $acceptsUnuploadedFiles = false;
+
+    /**
      * Constructor
      *
      * @throws InvalidArgumentException            If directory does not exist
@@ -303,7 +309,7 @@ class FileSystem implements StorageInterface
             $this->reserveDestination($destinationFile, $fileInfo);
         }
 
-        if ($this->moveUploadedFile($fileInfo->getPathname(), $stagingFile) === false) {
+        if ($this->moveIntoStaging($fileInfo->getPathname(), $stagingFile) === false) {
             $this->discardFailedUpload($stagingFile, $destinationFile);
 
             throw new Exception('File could not be moved to final destination.', $fileInfo);
@@ -601,6 +607,53 @@ class FileSystem implements StorageInterface
     }
 
     /**
+     * Store files PHP did not receive as uploads
+     *
+     * `move_uploaded_file()` refuses any source that is not in PHP's own register of files
+     * this request received as `multipart/form-data`, and that refusal is a real control: it
+     * is what stops a path an attacker steered — `/etc/passwd`, another user's upload, a
+     * config file — being moved into the upload directory under a name of their choosing. It
+     * is also why a `File` built from `$_FILES` is the only thing this class can store by
+     * default, and why `FileList` cannot store anything without this call.
+     *
+     * Turning it on hands that judgement to the caller, exactly as overriding
+     * `FileInfo::isUploadedFile()` does on the input side. **The two go together**: a caller
+     * on PSR-7 or a worker runtime needs both, and neither is worth making without a check of
+     * their own that says where the file legitimately came from. Nothing else changes — the
+     * staged write, the destination reservation, the deny-list, the symlink refusals and the
+     * mode all apply as they always did.
+     */
+    public function acceptFilesNotUploadedByPhp(): FileSystem
+    {
+        $this->acceptsUnuploadedFiles = true;
+
+        return $this;
+    }
+
+    /**
+     * Will this store a file PHP did not receive as an upload?
+     *
+     * `false` unless `acceptFilesNotUploadedByPhp()` was called, so a test or a security scan
+     * can assert the policy rather than infer it.
+     */
+    public function acceptsFilesNotUploadedByPhp(): bool
+    {
+        return $this->acceptsUnuploadedFiles;
+    }
+
+    /**
+     * Move the file to the staging path, by whichever route the caller has authorised
+     */
+    private function moveIntoStaging(string $source, string $stagingFile): bool
+    {
+        if ($this->acceptsUnuploadedFiles === false) {
+            return $this->moveUploadedFile($source, $stagingFile);
+        }
+
+        return $this->moveFile($source, $stagingFile);
+    }
+
+    /**
      * Move uploaded file
      *
      * This method allows us to stub this method in unit tests to avoid
@@ -611,5 +664,48 @@ class FileSystem implements StorageInterface
     protected function moveUploadedFile(string $source, string $destination): bool
     {
         return move_uploaded_file($source, $destination);
+    }
+
+    /**
+     * The same move without the SAPI's assertion about where the file came from, for a source
+     * `acceptFilesNotUploadedByPhp()` has authorised
+     *
+     * `rename()` first, which is atomic within a file system and never resolves a symbolic
+     * link at the destination.
+     *
+     * A tmp directory on tmpfs and an upload directory on disk — the standard container
+     * layout — is
+     * **not** what the copy below is for: the `rename(2)` syscall does fail with `EXDEV`
+     * across two file systems, but PHP's own plain-files wrapper catches that and copies, so
+     * `rename()` returns `true` and the bytes arrive. Verified against two real mounts. The
+     * copy is for what PHP's own handling does not cover — a source behind a stream wrapper,
+     * and any platform where its `rename()` reports the failure rather than absorbing it.
+     *
+     * Either way the destination here is the staging path and not the final name, because a
+     * copy *does* follow a link at the destination: 32 hex characters nobody can predict, in
+     * a directory this class already refuses to write a link into.
+     *
+     * A source left behind because it could not be unlinked does not fail the upload — the
+     * bytes are safely at the destination by then, and the caller's tmp directory is theirs
+     * to clean up.
+     *
+     * `private`, unlike its `move_uploaded_file()` counterpart: no test needs to stub it,
+     * since a source behind a stream wrapper reaches the copy branch on its own.
+     *
+     * @return bool
+     */
+    private function moveFile(string $source, string $destination): bool
+    {
+        if (@rename($source, $destination) === true) {
+            return true;
+        }
+
+        if (@copy($source, $destination) === false) {
+            return false;
+        }
+
+        @unlink($source);
+
+        return true;
     }
 }

@@ -62,7 +62,7 @@ jobs:
           cache-name: cache-composer-dependencies
         with:
           path: ${{ steps.composer-cache.outputs.dir }}
-          key: ${{ runner.os }}-php-${{ matrix.php }}-date-${{ steps.get-date.outputs.date }}-composer-${{ hashFiles('**/composer.json') }}
+          key: ${{ runner.os }}-php-${{ matrix.php }}-date-${{ steps.get-date.outputs.date }}-composer-${{ hashFiles('composer.json') }}
 
       - name: Install Composer dependencies
         run: composer install --no-scripts
@@ -82,3 +82,45 @@ jobs:
         with:
           files: tmp/coverage/report-xml/php-coverage1.xml
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  # `moveFile()`'s job is to carry a file across a file-system boundary, which is the
+  # container layout `FileSystem::acceptFilesNotUploadedByPhp()` exists for. The matrix job
+  # above runs that test only if it finds a second file system for itself — `/dev/shm` is one
+  # on the current runner image, but that is the image's choice and not a promise. This mounts
+  # one explicitly, so the coverage does not quietly disappear the day the image changes.
+  cross-file-system:
+    name: Cross file system on PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The ends of the supported range: this exercises PHP's own rename() across a device
+        # boundary, which is C in php-src rather than anything this library controls.
+        php: [ '7.3', '8.5' ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.0
+
+      - name: Install PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.35.5
+        with:
+          php-version: ${{ matrix.php }}
+
+      - name: Install Composer dependencies
+        run: composer install --no-scripts
+
+      - name: Mount a tmpfs to upload from
+        run: |
+          sudo mkdir -p /mnt/upload-tmp
+          sudo mount -t tmpfs -o size=16m,mode=1777 tmpfs /mnt/upload-tmp
+          # Fail here rather than in a test if the mount did not land on its own device
+          test "$(stat -c %d /mnt/upload-tmp)" != "$(stat -c %d /tmp)"
+
+      # The whole suite, not a --filter: a filter that matches nothing exits 0 with "No tests
+      # executed!", so it needed a second guard to prove it had run, and a rename was enough to
+      # cause exactly that. --fail-on-skipped is the only guard left, and the cross-file-system
+      # test is the suite's only skip, so it cannot pass here having tested nothing.
+      - name: Run the test suite against two file systems
+        env:
+          UPLOAD_TEST_OTHER_FS: /mnt/upload-tmp
+        run: vendor/bin/phpunit --fail-on-skipped
