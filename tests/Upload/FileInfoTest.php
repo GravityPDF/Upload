@@ -361,6 +361,42 @@ class FileInfoTest extends TestCase
     }
 
     /**
+     * `getimagesize()` emits an E_NOTICE for a file shorter than the 12 byte header it reads,
+     * and the message carries the absolute path of the temporary file. An empty upload is
+     * ordinary input, so it degrades to 0/0 as quietly as the other accessors do.
+     */
+    public function testGetDimensionsIsSilentForAFileShorterThanTheImageHeader(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'upl');
+        $this->assertNotSame(false, $path);
+        file_put_contents($path, '');
+
+        $diagnostics = [];
+        set_error_handler(static function ($errno, $errstr) use (&$diagnostics) {
+            /* What the manual tells a handler to do about `@`; without it every handler
+               sees the notice whether the call is silenced or not */
+            if ((error_reporting() & $errno) === 0) {
+                return true;
+            }
+
+            $diagnostics[] = $errstr;
+
+            return true;
+        });
+
+        try {
+            $file = new FileInfo($path, 'empty.png');
+            $dimensions = $file->getDimensions();
+        } finally {
+            restore_error_handler();
+            unlink($path);
+        }
+
+        $this->assertSame([], $diagnostics);
+        $this->assertSame(['width' => 0, 'height' => 0], $dimensions);
+    }
+
+    /**
      * A misspelled algorithm is broken code, not a file the end user should be told about.
      * Upload\Exception is the type File::isValid() formats into getErrors().
      */

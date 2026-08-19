@@ -264,11 +264,18 @@ class FileInfo extends SplFileInfo implements FileInfoInterface
     }
 
     /**
+     * Get image dimensions, or zeroes for anything that is not a readable image
+     *
+     * The call is silenced because `getimagesize()` emits an `E_NOTICE` for a file shorter
+     * than the 12 byte header it reads — an empty upload is ordinary input, and the notice
+     * carries the absolute path of the temporary file into the caller's error handler. It
+     * still returns `false` for those, which the branch below already reports as `0`/`0`.
+     *
      * @return array<string, float|int>
      */
     public function getDimensions(): array
     {
-        $imageSize = $this->isReadableFile() ? getimagesize($this->getPathname()) : false;
+        $imageSize = $this->isReadableFile() ? @getimagesize($this->getPathname()) : false;
         if (!$imageSize) {
             $imageSize = [0,0];
         }
