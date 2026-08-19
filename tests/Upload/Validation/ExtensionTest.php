@@ -28,7 +28,7 @@ class ExtensionTest extends TestCase
 
         try {
             $validation->validate($file);
-            $this->assertTrue(true);
+            $this->addToAssertionCount(1);
         } catch (Exception $e) {
             $this->fail('Unexpected exception thrown');
         }

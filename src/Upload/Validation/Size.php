@@ -6,7 +6,6 @@
  * @author      Josh Lockhart <info@joshlockhart.com>
  * @copyright   2012 Josh Lockhart
  * @link        http://www.joshlockhart.com
- * @version     2.0.0
  *
  * MIT LICENSE
  *
@@ -34,7 +33,6 @@ declare(strict_types=1);
 
 namespace GravityPdf\Upload\Validation;
 
-use RuntimeException;
 use GravityPdf\Upload\Exception;
 use GravityPdf\Upload\File;
 use GravityPdf\Upload\FileInfoInterface;
@@ -43,9 +41,7 @@ use GravityPdf\Upload\ValidationInterface;
 /**
  * Validate Upload File Size
  *
- * This class validates an uploads file size using maximum and (optionally)
- * minimum file size bounds (inclusive). Specify acceptable file sizes
- * as an integer (in bytes) or as a human-readable string (e.g. "5MB").
+ * Bounds are inclusive. Give each as an integer of bytes or a human-readable string ("5MB").
  *
  * @author  Josh Lockhart <info@joshlockhart.com>
  * @since   1.0.0
@@ -53,23 +49,16 @@ use GravityPdf\Upload\ValidationInterface;
  */
 class Size implements ValidationInterface
 {
-    /**
-     * Minimum acceptable file size (bytes)
-     * @var int
-     */
+    /** @var int Minimum acceptable file size (bytes) */
     protected $minSize;
 
-    /**
-     * Maximum acceptable file size (bytes)
-     * @var int
-     */
+    /** @var int Maximum acceptable file size (bytes) */
     protected $maxSize;
 
     /**
-     * Constructor
-     *
      * @param int|string $maxSize Maximum acceptable file size in bytes (inclusive)
      * @param int|string $minSize Minimum acceptable file size in bytes (inclusive)
+     * @throws \InvalidArgumentException If a string bound cannot be parsed as a file size
      */
     public function __construct($maxSize, $minSize = 0)
     {
@@ -87,14 +76,18 @@ class Size implements ValidationInterface
     }
 
     /**
-     * Validate
-     *
-     * @param FileInfoInterface $fileInfo
-     * @throws RuntimeException          If validation fails
+     * @throws Exception If validation fails
      */
     public function validate(FileInfoInterface $fileInfo): void
     {
         $fileSize = $fileInfo->getSize();
+
+        /* On PHP 8 SplFileInfo::getSize() throws instead of returning false. File::isValid()
+           would absorb that as the generic "Validation could not be completed"; this reports
+           what actually went wrong with the file. */
+        if ($fileSize === false) {
+            throw new Exception('File size could not be determined', $fileInfo);
+        }
 
         if ($fileSize < $this->minSize) {
             throw new Exception(
@@ -105,7 +98,7 @@ class Size implements ValidationInterface
 
         if ($fileSize > $this->maxSize) {
             throw new Exception(
-                sprintf('File size is too large. Must be less than: %s', $this->maxSize),
+                sprintf('File size is too large. Must be less than or equal to: %s', $this->maxSize),
                 $fileInfo
             );
         }

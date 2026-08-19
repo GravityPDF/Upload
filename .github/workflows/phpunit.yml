@@ -6,6 +6,10 @@ on:
       - main
   pull_request:
 
+# The workflows only read the repository; nothing needs a write-capable GITHUB_TOKEN.
+permissions:
+  contents: read
+
 # Cancels all previous workflow runs for pull requests that have not completed.
 concurrency:
   # The concurrency group contains the workflow name and the branch name for pull requests
@@ -28,10 +32,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.0
 
       - name: Install PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.35.5
         with:
           php-version: ${{ matrix.php }}
 
@@ -46,14 +50,14 @@ jobs:
       # http://man7.org/linux/man-pages/man1/date.1.html
       - name: "Get last Monday's date"
         id: get-date
-        run: echo "::set-output name=date::$(/bin/date -u --date='last Mon' "+%F")"
+        run: echo "date=$(/bin/date -u --date='last Mon' "+%F")" >> "$GITHUB_OUTPUT"
 
       - name: Get Composer cache directory
         id: composer-cache
-        run: echo "::set-output name=dir::$(composer config cache-files-dir)"
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Composer dependencies
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.0.4
         env:
           cache-name: cache-composer-dependencies
         with:
@@ -61,13 +65,20 @@ jobs:
           key: ${{ runner.os }}-php-${{ matrix.php }}-date-${{ steps.get-date.outputs.date }}-composer-${{ hashFiles('**/composer.json') }}
 
       - name: Install Composer dependencies
-        run: composer install
+        run: composer install --no-scripts
 
       - name: Run PHPUnit tests
         run: vendor/bin/phpunit
 
       - name: Run (xDebug) tests
         if: ${{ matrix.report }}
-        run: |
-          vendor/bin/phpunit --verbose --coverage-clover=tmp/coverage/report-xml/php-coverage1.xml
-          bash <(curl -s https://codecov.io/bash);
+        run: vendor/bin/phpunit --verbose --coverage-clover=tmp/coverage/report-xml/php-coverage1.xml
+
+      # Replaces `bash <(curl -s https://codecov.io/bash)` — an unpinned remote script piped
+      # into bash, which was compromised in April 2021 and has since been sunset by Codecov.
+      - name: Upload coverage to Codecov
+        if: ${{ matrix.report }}
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.1
+        with:
+          files: tmp/coverage/report-xml/php-coverage1.xml
+          token: ${{ secrets.CODECOV_TOKEN }}

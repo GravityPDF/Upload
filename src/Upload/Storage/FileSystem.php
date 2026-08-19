@@ -6,7 +6,6 @@
  * @author      Josh Lockhart <info@joshlockhart.com>
  * @copyright   2012 Josh Lockhart
  * @link        http://www.joshlockhart.com
- * @version     2.0.0
  *
  * MIT LICENSE
  *
@@ -36,13 +35,17 @@ namespace GravityPdf\Upload\Storage;
 
 use InvalidArgumentException;
 use GravityPdf\Upload\Exception;
+use GravityPdf\Upload\Filename;
 use GravityPdf\Upload\FileInfoInterface;
 use GravityPdf\Upload\StorageInterface;
 
 /**
  * FileSystem Storage
  *
- * This class uploads files to a designated directory on the filesystem.
+ * Three protections are on by default and each has to be turned off explicitly: existing files
+ * are never overwritten (`$overwrite`), the extensions in `getDefaultBlockedExtensions()` are
+ * never written (`allowAnyExtension()`), and stored files get `DEFAULT_MODE` rather than
+ * whatever the process umask allows (`setMode(null)`).
  *
  * @author  Josh Lockhart <info@joshlockhart.com>
  * @since   1.0.0
@@ -50,6 +53,52 @@ use GravityPdf\Upload\StorageInterface;
  */
 class FileSystem implements StorageInterface
 {
+    /**
+     * Extensions a web server is commonly configured to execute or read as configuration
+     *
+     * Also covers client-side binary formats. The list is not exhaustive; an allow-list via
+     * `\GravityPdf\Upload\Validation\FileType` is the primary control.
+     *
+     * @var string[]
+     */
+    public const EXECUTABLE_EXTENSIONS = [
+        'php', 'php2', 'php3', 'php4', 'php5', 'php6', 'php7', 'php8', 'phps', 'phtml', 'phtm',
+        'phar', 'pht', 'inc',
+        'shtml', 'shtm', 'stm',
+        'cgi', 'fcgi', 'pl', 'py', 'rb', 'sh', 'bash', 'ps1',
+        'jsp', 'jspx', 'jspf', 'jsw', 'jsv', 'jshtml', 'jar', 'war',
+        'asp', 'aspx', 'asa', 'asax', 'ascx', 'ashx', 'asmx', 'cer', 'cshtml', 'vbhtml',
+        'exe', 'dll', 'com', 'bat', 'cmd', 'msi', 'scr', 'vbs', 'ws', 'wsf', 'hta',
+        'htaccess', 'htpasswd', 'ini', 'conf', 'config',
+    ];
+
+    /**
+     * Extensions a browser renders as markup or runs as script
+     *
+     * These are not executed by the server, so the risk is stored XSS: a request for the
+     * uploaded file returns markup that runs in the origin serving it, with access to that
+     * origin's cookies and storage. SVG counts, because it carries `<script>` and event
+     * handler attributes.
+     *
+     * @var string[]
+     */
+    public const MARKUP_EXTENSIONS = [
+        'html', 'htm', 'xhtml', 'xht', 'xhtm',
+        'svg', 'svgz',
+        'xml', 'xsl', 'xslt',
+        'js', 'mjs',
+        'swf',
+        'mht', 'mhtml',
+    ];
+
+    /**
+     * Permissions applied to a stored file unless `setMode()` says otherwise
+     *
+     * Owner read/write and group read. `move_uploaded_file()` otherwise leaves the mode to the
+     * process umask, which on a typical `022` lands the file world-readable.
+     */
+    public const DEFAULT_MODE = 0640;
+
     /**
      * Path to upload destination directory (with trailing slash)
      * @var string
@@ -63,10 +112,20 @@ class FileSystem implements StorageInterface
     protected $overwrite;
 
     /**
+     * Extensions that may never be written (lowercase, without leading dot)
+     * @var string[]
+     */
+    protected $blockedExtensions = [];
+
+    /**
+     * Permissions to apply to the stored file, or null to leave the process umask in charge
+     * @var int|null
+     */
+    protected $mode;
+
+    /**
      * Constructor
      *
-     * @param string $directory Relative or absolute path to upload directory
-     * @param bool $overwrite Should this overwrite existing files?
      * @throws InvalidArgumentException            If directory does not exist
      * @throws InvalidArgumentException            If directory is not writable
      */
@@ -82,22 +141,185 @@ class FileSystem implements StorageInterface
 
         $this->directory = rtrim($directory, '/') . DIRECTORY_SEPARATOR;
         $this->overwrite = $overwrite;
+
+        $this->blockExtensions(self::getDefaultBlockedExtensions());
+        $this->setMode(self::DEFAULT_MODE);
+    }
+
+    /**
+     * The extensions refused unless `blockExtensions()` is given a list of its own
+     *
+     * A method rather than a constant because constant expressions cannot call `array_merge()`
+     * on PHP 7.3.
+     *
+     * @return string[]
+     */
+    public static function getDefaultBlockedExtensions(): array
+    {
+        return array_merge(self::EXECUTABLE_EXTENSIONS, self::MARKUP_EXTENSIONS);
+    }
+
+    /**
+     * Refuse to store files with any of these extensions
+     *
+     * On by default; a last line of defence that applies whatever validations the caller
+     * configured, matched against the sanitized extension about to be written.
+     *
+     * Entries are lowercased, trimmed, stripped of a leading dot and split on any remaining
+     * dots, because the deny-list is matched one dot-separated component at a time: `tar.gz`
+     * blocks `tar` and `gz` independently rather than nothing at all, and `.php` is taken as
+     * `php` rather than quietly blocking nothing.
+     *
+     * Empty is refused so a missing config key cannot turn the control off;
+     * `allowAnyExtension()` is the only way to the empty list, and it is greppable.
+     *
+     * @param string[] $extensions Extensions with or without leading dots
+     * @return FileSystem Self
+     * @throws InvalidArgumentException If the list is empty; call `allowAnyExtension()` instead
+     *
+     * ```php
+     * $storage->blockExtensions(array_merge(FileSystem::getDefaultBlockedExtensions(), ['csv']));
+     * ```
+     */
+    public function blockExtensions(array $extensions): FileSystem
+    {
+        if ($extensions === []) {
+            throw new InvalidArgumentException(
+                'blockExtensions() cannot be given an empty list. Call allowAnyExtension() to '
+                . 'store any extension, including the ones a server executes.'
+            );
+        }
+
+        $blocked = [];
+
+        foreach ($extensions as $extension) {
+            foreach (Filename::normalizeComponents($extension) as $component) {
+                $blocked[] = $component;
+            }
+        }
+
+        $this->blockedExtensions = array_values(array_unique($blocked));
+
+        return $this;
+    }
+
+    /**
+     * Store any extension, including the ones a server executes
+     *
+     * The only way to empty the deny-list, so turning a security control off is always this
+     * call and never a config value that happened to be missing. Deliberately greppable.
+     *
+     * @return FileSystem Self
+     */
+    public function allowAnyExtension(): FileSystem
+    {
+        $this->blockedExtensions = [];
+
+        return $this;
+    }
+
+    /**
+     * The extensions currently refused at the write
+     *
+     * Every entry is lowercase, carries no leading dot and names one dot-separated component,
+     * whatever shape it was passed in. An empty array means the deny-list is off.
+     *
+     * @return string[]
+     */
+    public function getBlockedExtensions(): array
+    {
+        return $this->blockedExtensions;
+    }
+
+    /**
+     * Set the permissions applied to each stored file
+     *
+     * Defaults to `self::DEFAULT_MODE`. Pass `null` to leave the mode to the process umask,
+     * which is what `move_uploaded_file()` does on its own.
+     *
+     * @return FileSystem Self
+     */
+    public function setMode(?int $mode): FileSystem
+    {
+        $this->mode = $mode;
+
+        return $this;
+    }
+
+    /**
+     * The permissions applied to each stored file, or `null` to leave them to the umask
+     */
+    public function getMode(): ?int
+    {
+        return $this->mode;
+    }
+
+    /**
+     * Whether an existing file at the destination is replaced rather than refused
+     */
+    public function getOverwrite(): bool
+    {
+        return $this->overwrite;
     }
 
     /**
      * Upload
      *
-     * @param FileInfoInterface $fileInfo
-     * @return string
+     * The file is written to an unpredictable name inside the destination directory and then
+     * `rename()`d onto the destination. `rename()` replaces the directory entry rather than
+     * following it, so the bytes never travel through a symbolic link someone planted at the
+     * destination, and no partial content is ever readable under the final name.
+     *
+     * With `overwrite = false` — the default — the final name is not free during the transfer:
+     * `reserveDestination()` claims it first with an empty file, so that two requests cannot
+     * both win it. That placeholder carries the configured mode, and `rename()` replaces it
+     * with the finished upload. A process killed mid-transfer therefore leaves a 0-byte file
+     * under the name rather than nothing, and the next upload of that name reports a collision
+     * until it is cleared. With `overwrite = true` there is no placeholder and no such window.
+     *
+     * @throws Exception If the file cannot be stored safely
      */
     public function upload(FileInfoInterface $fileInfo): string
     {
-        $destinationFile = $this->directory . $fileInfo->getNameWithExtension();
-        if ($this->overwrite === false && is_file($destinationFile) === true) {
-            throw new Exception('File already exists', $fileInfo);
+        /* `resolveFilename()` is the naming seam a subclass may replace; the refusals below are
+           not, and are applied to whatever name it returns. Inside it, an override that said
+           nothing about extensions dropped them both. */
+        $filename = $this->resolveFilename($fileInfo);
+        $this->refuseReservedWindowsName($filename, $fileInfo);
+        $this->refuseBlockedExtensions($filename, $fileInfo);
+
+        $destinationFile = $this->directory . $filename;
+
+        /* `is_file()` follows symlinks, so it cannot see a dangling one. This reports the
+           ordinary case with a message that says what is wrong; it is not what makes the write
+           safe, because anything checked here can change before the write happens. */
+        if (is_link($destinationFile)) {
+            throw new Exception('Destination is a symbolic link', $fileInfo);
         }
 
-        if ($this->moveUploadedFile($fileInfo->getPathname(), $destinationFile) === false) {
+        $stagingFile = $this->createStagingPath($fileInfo);
+
+        if ($this->overwrite === false) {
+            $this->reserveDestination($destinationFile, $fileInfo);
+        }
+
+        if ($this->moveUploadedFile($fileInfo->getPathname(), $stagingFile) === false) {
+            $this->discardFailedUpload($stagingFile, $destinationFile);
+
+            throw new Exception('File could not be moved to final destination.', $fileInfo);
+        }
+
+        /* On the staged file, so there is no moment where the finished upload is readable
+           under its final name at the umask's mode instead of this one */
+        if ($this->mode !== null && @chmod($stagingFile, $this->mode) === false) {
+            $this->discardFailedUpload($stagingFile, $destinationFile);
+
+            throw new Exception('Permissions could not be applied to the stored file', $fileInfo);
+        }
+
+        if (@rename($stagingFile, $destinationFile) === false) {
+            $this->discardFailedUpload($stagingFile, $destinationFile);
+
             throw new Exception('File could not be moved to final destination.', $fileInfo);
         }
 
@@ -105,9 +327,273 @@ class FileSystem implements StorageInterface
     }
 
     /**
-     * Get directory (without trailing slash)
+     * A name in the destination directory that nobody else can predict
      *
-     * @return string
+     * `move_uploaded_file()` renames when the temporary directory and the upload directory share
+     * a file system and falls back to a stream copy when they do not, and that copy follows a
+     * symlink at the destination. Sending it to a name an attacker cannot guess is what removes
+     * the race; the `rename()` that follows never resolves a link.
+     *
+     * @throws Exception If the platform cannot produce random bytes
+     */
+    private function createStagingPath(FileInfoInterface $fileInfo): string
+    {
+        try {
+            $unique = bin2hex(random_bytes(16));
+        } catch (\Throwable $e) {
+            throw new Exception('Could not generate a temporary file name', $fileInfo, 0, $e);
+        }
+
+        return $this->directory . 'upload-' . $unique . '.part';
+    }
+
+    /**
+     * Claim the destination name for this upload before anything is written
+     *
+     * Protected so a test can reach the branches that need a symlink planted mid-call, which is
+     * otherwise a race; not an extension seam.
+     *
+     * @throws Exception If the name is taken, or cannot be claimed safely
+     */
+    protected function reserveDestination(string $destinationFile, FileInfoInterface $fileInfo): void
+    {
+        /* O_EXCL combines the existence check and the create into one operation. Checking
+           is_file() first lets two concurrent requests both pass it. */
+        $handle = @fopen($destinationFile, 'xb');
+
+        if (!is_resource($handle)) {
+            /* `x` also fails when the directory has been removed or its permissions changed
+               since the constructor checked it. Calling that a collision sends the caller down
+               a rename-and-retry path that cannot succeed. */
+            if (file_exists($destinationFile) || is_link($destinationFile)) {
+                /* Name the file, because sanitizing is many-to-one: `report?.txt` and
+                   `report*.txt` both resolve to `report-.txt`, so a caller told only that
+                   something already exists cannot tell which of their names collided. The
+                   basename, never the path, and it has been through resolveFilename(), so it
+                   carries no control characters or separators. Escape it on output.
+
+                   This message and 'Destination file could not be created' are distinguishable,
+                   and the distinction is precisely "does this name exist in the upload
+                   directory". Anything that renders a storage exception to whoever submitted
+                   the file hands them a free existence oracle for it, one that leaves nothing
+                   behind because no file is written. Storage messages are for your logs;
+                   `getErrors()` is the list written to be shown. */
+                throw new Exception(
+                    sprintf('A file named "%s" already exists', basename($destinationFile)),
+                    $fileInfo
+                );
+            }
+
+            throw new Exception('Destination file could not be created', $fileInfo);
+        }
+
+        $opened = fstat($handle);
+        fclose($handle);
+
+        /* PHP resolves the path through its own stream layer before the exclusive create, so
+           `x` follows a symlink where the underlying O_EXCL refuses one. What was just created
+           is the destination only if the directory entry is that same file; a symlink has an
+           inode of its own, so a mismatch means the name was a link.
+
+           POSIX only. Before PHP 7.4 `stat()` on Windows reports `ino` as 0 and `dev` as the
+           drive number, so this comparison degrades to same-drive and detects nothing. Windows
+           symlinks need a privilege an uploading process should not hold, so the residual risk
+           is small, but the symlink protections in this class are not load-bearing there. */
+        $entry = $this->lstatEntry($destinationFile);
+
+        if ($opened === false || $entry === false) {
+            /* Not reported as a symlink: neither stat answered, so nothing has been established
+               about what the name is. Unlike a mismatch, this branch has to clean up after
+               itself — the entry is a real, empty file this call created, and left behind it
+               takes the caller's name permanently, so every later upload of it collides. */
+            $this->releaseReservation($destinationFile, $opened);
+
+            throw new Exception('Destination file could not be created', $fileInfo);
+        }
+
+        if ($opened['dev'] !== $entry['dev'] || $opened['ino'] !== $entry['ino']) {
+            /* The write is already refused at this point and nothing of the victim's was
+               overwritten, but `x` has created a file at the far end of the link, outside the
+               upload directory. Take that back too. */
+            $this->releaseReservation($destinationFile, $opened);
+
+            throw new Exception('Destination is a symbolic link', $fileInfo);
+        }
+
+        /* `x` creates at `0666 & ~umask`, which is usually world-readable, and the placeholder
+           holds the final name for the whole transfer. Not before the inode check above: a
+           chmod by path would follow a symlink and re-mode someone else's file. A failure is
+           not fatal — the file is empty, so there is nothing to read out of it, and the mode
+           that matters is the one applied to the staged file before it is renamed here. */
+        if ($this->mode !== null) {
+            @chmod($destinationFile, $this->mode);
+        }
+    }
+
+    /**
+     * `lstat()` on the directory entry itself, following no symlink
+     *
+     * Wrapped so a test can exercise the branch where the stat does not answer, which is
+     * otherwise only reachable by racing the file system.
+     *
+     * @return array<int|string, int>|false
+     */
+    protected function lstatEntry(string $path)
+    {
+        return @lstat($path);
+    }
+
+    /**
+     * Remove the entry a reservation created, wherever `x` mode actually put it
+     *
+     * @param array<int|string, int>|false $opened `fstat()` of the handle this call opened
+     */
+    private function releaseReservation(string $destinationFile, $opened): void
+    {
+        $target = @readlink($destinationFile);
+
+        if ($target === false) {
+            /* Not a link, so the name is the file. `unlink()` does not follow one in any case. */
+            @unlink($destinationFile);
+
+            return;
+        }
+
+        /* A symlink was already here and `x` created its target. Remove that file and only that
+           file: the inode has to be the one this call opened, so a link re-pointed between the
+           create and this check cannot make us delete a bystander. Failing that test leaves the
+           file behind, which is the safe way to be wrong. The link itself stays — it was not
+           this upload's to create, so it is not this upload's to remove. */
+        if ($opened === false) {
+            return;
+        }
+
+        if (preg_match('~^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)~', $target) !== 1) {
+            $target = dirname($destinationFile) . DIRECTORY_SEPARATOR . $target;
+        }
+
+        $stat = @lstat($target);
+
+        if ($stat !== false && $stat['dev'] === $opened['dev'] && $stat['ino'] === $opened['ino']) {
+            @unlink($target);
+        }
+    }
+
+    /**
+     * Remove what a failed upload left behind
+     *
+     * The destination is only this upload's to remove when `overwrite` is off, where it holds
+     * the placeholder `reserveDestination()` created. With overwriting on, whatever is there
+     * belongs to someone else and the upload has not touched it.
+     */
+    private function discardFailedUpload(string $stagingFile, string $destinationFile): void
+    {
+        @unlink($stagingFile);
+
+        if ($this->overwrite === false) {
+            @unlink($destinationFile);
+        }
+    }
+
+    /**
+     * Reduce a `FileInfoInterface` name to a filename that stays in the upload directory
+     *
+     * `FileInfoInterface` is a public extension point, so the name arriving here is only as
+     * trustworthy as the implementation the caller (or `FileInfo::setFactory()`) installed.
+     * This class should not assume sanitizing happened elsewhere.
+     *
+     * @throws Exception If the name cannot be reduced to a safe filename
+     */
+    protected function resolveFilename(FileInfoInterface $fileInfo): string
+    {
+        $filename = basename(str_replace('\\', '/', $fileInfo->getNameWithExtension()));
+
+        /* Windows drops trailing dots and spaces when it resolves a name, so `evil.php.` and
+           `evil.php ` both open `evil.php`. Take them off here, so that what is checked below
+           is the name the file system will actually answer to. */
+        $filename = rtrim($filename, " .");
+
+        /* Windows refuses these in a filename, and `:` does something worse than fail on NTFS:
+           it names an alternate data stream, so a write to `report.txt:payload` lands beside a
+           benign-looking entry that a directory listing sizes at zero. Rewritten rather than
+           refused, because POSIX allows every one of them and refusing would reject a name that
+           is perfectly ordinary on the system doing the storing. Runs before the checks below,
+           so they see the name that will actually be written.
+
+           `FileInfo::sanitizeName()` rewrites this set too, along with `%`, `/` and `\`; keep
+           the two in step. */
+        $filename = (string) preg_replace('/[<>:"|?*]/', '-', $filename);
+
+        /* basename() has removed every separator. What remains to reject are the values that
+           are not usable filenames: the two directory entries, a name hidden from the shell
+           globbing and directory listings a cleanup script relies on, and the control
+           characters that let a name forge a line in a log or a terminal — the same set
+           `FileInfo` rewrites, read from the constant rather than copied, so the two cannot
+           drift apart again.
+
+           The bidi controls are refused for the reason the control characters are: they carry
+           no visual content of their own, so `resume\u{202E}gpj.exe` reads as `resumeexe.jpg`
+           wherever a person sees it while the stored file is still the executable. Refused
+           rather than deleted, because inventing a name is the value object's job — the shipped
+           `FileInfo` deletes exactly this set, so only an implementation of your own arrives
+           here with one. Keep the two in step. */
+        if (
+            $filename === ''
+            || strpos($filename, '.') === 0
+            || Filename::hasControlCharacters($filename)
+            || Filename::hasBidiControls($filename)
+        ) {
+            throw new Exception('Invalid destination file name', $fileInfo);
+        }
+
+        return $filename;
+    }
+
+    /**
+     * Refuse a name Windows resolves to a device rather than a file
+     *
+     * See `Filename::RESERVED_WINDOWS_NAMES` for which names these are and why the component
+     * before the first dot decides it. Screened here as well as in `FileInfo` because a
+     * `FileInfoInterface` is a public extension point and this class does not trust what one
+     * returns. It throws rather than blanking the name, because inventing a filename is the
+     * value object's job, not storage's.
+     *
+     * @throws Exception If the name resolves to a device
+     */
+    private function refuseReservedWindowsName(string $filename, FileInfoInterface $fileInfo): void
+    {
+        if (Filename::isReservedDeviceComponent(Filename::deviceComponent($filename))) {
+            throw new Exception('Invalid destination file name', $fileInfo);
+        }
+    }
+
+    /**
+     * Refuse a name carrying a blocked extension anywhere in it
+     *
+     * Every dot-separated component is checked, not just the last one, because a server does not
+     * necessarily read the name the way `pathinfo()` does: Apache's `AddHandler`/`AddType` match
+     * any dot component, so `evil.php.jpg` is served as PHP on a configuration that maps `.php`.
+     *
+     * @throws Exception If any component is on the deny-list
+     */
+    private function refuseBlockedExtensions(string $filename, FileInfoInterface $fileInfo): void
+    {
+        $components = Filename::extensionComponents($filename);
+
+        foreach ($components as $component) {
+            $component = trim($component);
+
+            if (in_array($component, $this->blockedExtensions, true)) {
+                throw new Exception(
+                    sprintf('Files with the extension "%s" cannot be stored', $component),
+                    $fileInfo
+                );
+            }
+        }
+    }
+
+    /**
+     * Get directory (without trailing slash)
      */
     public function getDirectory(): string
     {
@@ -120,8 +606,6 @@ class FileSystem implements StorageInterface
      * This method allows us to stub this method in unit tests to avoid
      * hard dependency on the `move_uploaded_file` function.
      *
-     * @param string $source The source file
-     * @param string $destination The destination file
      * @return bool
      */
     protected function moveUploadedFile(string $source, string $destination): bool

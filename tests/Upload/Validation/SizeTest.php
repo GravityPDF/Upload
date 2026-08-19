@@ -28,7 +28,7 @@ class SizeTest extends TestCase
 
         try {
             $validation->validate($file);
-            $this->assertTrue(true);
+            $this->addToAssertionCount(1);
         } catch (Exception $e) {
             $this->fail('Unexpected exception thrown');
         }
@@ -41,7 +41,7 @@ class SizeTest extends TestCase
 
         try {
             $validation->validate($file);
-            $this->assertTrue(true);
+            $this->addToAssertionCount(1);
         } catch (Exception $e) {
             $this->fail('Unexpected exception thrown');
         }
@@ -50,7 +50,7 @@ class SizeTest extends TestCase
     public function testInvalidFileSize(): void
     {
         $this->expectException(Exception::class);
-        $this->expectExceptionMessage('File size is too large. Must be less than: 400');
+        $this->expectExceptionMessage('File size is too large. Must be less than or equal to: 400');
 
         $file = new FileInfo($this->assetsDirectory . '/foo.txt', 'foo.txt');
         $validation = new Size(400);
@@ -60,10 +60,29 @@ class SizeTest extends TestCase
     public function testInvalidFileSizeWithHumanReadableArgument(): void
     {
         $this->expectException(Exception::class);
-        $this->expectExceptionMessage('File size is too large. Must be less than: 400');
+        $this->expectExceptionMessage('File size is too large. Must be less than or equal to: 400');
 
         $file = new FileInfo($this->assetsDirectory . '/foo.txt', 'foo.txt');
         $validation = new Size('400B');
         $validation->validate($file);
+    }
+
+    /**
+     * A file that no longer stats reports as a validation failure rather than escaping. On
+     * PHP 8 `SplFileInfo::getSize()` throws instead of returning false, and the bound is not
+     * what rejected it — a file below the minimum and one that cannot be measured must not
+     * report the same way.
+     */
+    public function testAnUnmeasurableFileIsNotReportedAsTooSmall(): void
+    {
+        $file = new FileInfo($this->assetsDirectory . '/does-not-exist.txt', 'gone.txt');
+
+        try {
+            (new Size(500, 100))->validate($file);
+            $this->fail('Expected an unmeasurable file to fail validation');
+        } catch (Exception $e) {
+            $this->assertSame('File size could not be determined', $e->getMessage());
+            $this->assertSame($file, $e->getFileInfo());
+        }
     }
 }

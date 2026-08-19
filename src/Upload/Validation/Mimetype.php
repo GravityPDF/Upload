@@ -6,7 +6,6 @@
  * @author      Josh Lockhart <info@joshlockhart.com>
  * @copyright   2012 Josh Lockhart
  * @link        http://www.joshlockhart.com
- * @version     2.0.0
  *
  * MIT LICENSE
  *
@@ -34,7 +33,6 @@ declare(strict_types=1);
 
 namespace GravityPdf\Upload\Validation;
 
-use RuntimeException;
 use GravityPdf\Upload\Exception;
 use GravityPdf\Upload\FileInfoInterface;
 use GravityPdf\Upload\ValidationInterface;
@@ -42,7 +40,10 @@ use GravityPdf\Upload\ValidationInterface;
 /**
  * Validate Upload Media Type
  *
- * This class validates an upload's media type (e.g. "image/png").
+ * @deprecated 4.0.0 Use GravityPdf\Upload\Validation\FileType, which constrains the stored
+ * extension as well and requires the two to agree. `finfo` inspects the leading bytes, which a
+ * polyglot satisfies trivially: a file that begins "GIF89a" and continues with PHP is reported
+ * as image/gif. This class still works and has no runtime deprecation notice.
  *
  * @author  Josh Lockhart <info@joshlockhart.com>
  * @since   1.0.0
@@ -50,15 +51,10 @@ use GravityPdf\Upload\ValidationInterface;
  */
 class Mimetype implements ValidationInterface
 {
-    /**
-     * Valid media types
-     * @var string[]
-     */
+    /** @var string[] Valid media types */
     protected $mimetypes;
 
     /**
-     * Constructor
-     *
      * @param string|string[] $mimetypes
      */
     public function __construct($mimetypes)
@@ -70,10 +66,7 @@ class Mimetype implements ValidationInterface
     }
 
     /**
-     * Validate
-     *
-     * @param FileInfoInterface $fileInfo
-     * @throws RuntimeException          If validation fails
+     * @throws Exception If validation fails
      */
     public function validate(FileInfoInterface $fileInfo): void
     {

@@ -6,7 +6,6 @@
  * @author      Josh Lockhart <info@joshlockhart.com>
  * @copyright   2012 Josh Lockhart
  * @link        http://www.joshlockhart.com
- * @version     2.0.0
  *
  * MIT LICENSE
  *
@@ -44,13 +43,9 @@ namespace GravityPdf\Upload;
 interface ValidationInterface
 {
     /**
-     * Validate file
+     * Signal failure by throwing; there is no return value to inspect.
      *
-     * This method is responsible for validating an `\GravityPdf\Upload\FileInfoInterface` instance.
-     * If validation fails, an exception should be thrown.
-     *
-     * @param FileInfoInterface $fileInfo
-     * @throws \Exception                If validation fails
+     * @throws \Exception If validation fails
      */
     public function validate(FileInfoInterface $fileInfo): void;
 }

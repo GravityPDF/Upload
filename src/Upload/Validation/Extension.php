@@ -6,7 +6,6 @@
  * @author      Josh Lockhart <info@joshlockhart.com>
  * @copyright   2012 Josh Lockhart
  * @link        http://www.joshlockhart.com
- * @version     2.0.0
  *
  * MIT LICENSE
  *
@@ -34,7 +33,7 @@ declare(strict_types=1);
 
 namespace GravityPdf\Upload\Validation;
 
-use RuntimeException;
+use GravityPdf\Upload\AsciiCase;
 use GravityPdf\Upload\Exception;
 use GravityPdf\Upload\FileInfoInterface;
 use GravityPdf\Upload\ValidationInterface;
@@ -42,29 +41,25 @@ use GravityPdf\Upload\ValidationInterface;
 /**
  * Validate File Extension
  *
- * This class validates an uploads file extension. It takes file extension with out dot
- * or array of extensions. For example: 'png' or array('jpg', 'png', 'gif').
- *
- * @internal WARNING! Validation only by file extension not very secure.
- * Always use in conjunction with GravityPdf\Upload\Validation\Mimetype
+ * @deprecated 4.0.0 Use GravityPdf\Upload\Validation\FileType, which constrains the contents
+ * as well and requires the two to agree. Checking the extension on its own says nothing about
+ * what the file holds. This class still works and has no runtime deprecation notice.
  *
  * @author  Alex Kucherenko <kucherenko.email@gmail.com>
+ * @since   1.0.0
  * @package Upload
  */
 class Extension implements ValidationInterface
 {
-    /**
-     * Array of acceptable file extensions without leading dots
-     * @var string[]
-     */
+    /** @var string[] Acceptable file extensions, without leading dots */
     protected $allowedExtensions;
 
     /**
-     * Constructor
+     * @param string|string[] $allowedExtensions Allowed file extensions, without leading dots
      *
-     * @param string|string[] $allowedExtensions Allowed file extensions
-     * @example new \GravityPdf\Upload\Validation\Extension(array('png','jpg','gif'))
-     * @example new \GravityPdf\Upload\Validation\Extension('png')
+     * ```php
+     * new \GravityPdf\Upload\Validation\Extension(['png', 'jpg', 'gif']);
+     * ```
      */
     public function __construct($allowedExtensions)
     {
@@ -72,18 +67,15 @@ class Extension implements ValidationInterface
             $allowedExtensions = [$allowedExtensions];
         }
 
-        $this->allowedExtensions = array_map('strtolower', $allowedExtensions);
+        $this->allowedExtensions = array_map([AsciiCase::class, 'toLower'], $allowedExtensions);
     }
 
     /**
-     * Validate
-     *
-     * @param FileInfoInterface $fileInfo
-     * @throws RuntimeException         If validation fails
+     * @throws Exception If validation fails
      */
     public function validate(FileInfoInterface $fileInfo): void
     {
-        $fileExtension = strtolower($fileInfo->getExtension());
+        $fileExtension = AsciiCase::toLower($fileInfo->getExtension());
 
         if (!in_array($fileExtension, $this->allowedExtensions, true)) {
             throw new Exception(

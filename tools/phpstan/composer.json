@@ -1,0 +1,7 @@
+{
+  "description": "PHPStan needs PHP 7.4 to run while the library supports 7.3, so it cannot sit in the root require-dev without making the whole dev requirement unresolvable there. `composer phpstan` installs it from here.",
+  "license": "MIT",
+  "require": {
+    "phpstan/phpstan": "^2.2"
+  }
+}

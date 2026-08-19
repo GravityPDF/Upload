@@ -6,7 +6,6 @@
  * @author      Josh Lockhart <info@joshlockhart.com>
  * @copyright   2012 Josh Lockhart
  * @link        http://www.joshlockhart.com
- * @version     2.0.0
  *
  * MIT LICENSE
  *
@@ -35,7 +34,7 @@ declare(strict_types=1);
 namespace GravityPdf\Upload;
 
 use finfo;
-use RuntimeException;
+use LogicException;
 use SplFileInfo;
 
 /**
@@ -47,33 +46,19 @@ use SplFileInfo;
  */
 class FileInfo extends SplFileInfo implements FileInfoInterface
 {
-    /**
-     * Factory method that returns new instance of \FileInfoInterface
-     * @var callable|null
-     */
+    /** @var callable|null Installed by `setFactory()`, process-wide */
     protected static $factory;
 
-    /**
-     * File name (without extension)
-     * @var string
-     */
+    /** @var string Name, without extension */
     protected $name = '';
 
-    /**
-     * File extension (without dot prefix)
-     * @var string
-     */
+    /** @var string Extension, without dot prefix */
     protected $extension = '';
 
-    /**
-     * File mimetype
-     * @var string
-     */
+    /** @var string */
     protected $mimetype = '';
 
     /**
-     * Constructor
-     *
      * @param string $filePathname Absolute path to uploaded file on disk
      * @param string|null $newName Desired file name (with extension) of uploaded file
      */
@@ -90,12 +75,23 @@ class FileInfo extends SplFileInfo implements FileInfoInterface
         static::$factory = $callable;
     }
 
+    /**
+     * Clear any factory previously installed with `setFactory()`
+     *
+     * The factory is process-wide state, so long-lived processes and test suites need a
+     * supported way to put it back.
+     */
+    public static function resetFactory(): void
+    {
+        static::$factory = null;
+    }
+
     public static function createFromFactory(string $tmpName, ?string $name = null): FileInfoInterface
     {
         if (is_callable(static::$factory)) {
             $result = call_user_func(static::$factory, $tmpName, $name);
             if ($result instanceof FileInfoInterface === false) {
-                throw new RuntimeException(
+                throw new LogicException(
                     'FileInfo factory must return instance of \GravityPdf\Upload\FileInfoInterface.'
                 );
             }
@@ -106,30 +102,16 @@ class FileInfo extends SplFileInfo implements FileInfoInterface
         return new static($tmpName, $name);
     }
 
-    /**
-     * Get file name (without extension)
-     *
-     * @return string
-     */
     public function getName(): string
     {
         return $this->name;
     }
 
     /**
-     * Set file name (without extension)
+     * Sanitize and set the file name, without extension
      *
-     * Sanitize the filename (if outputting the filename to HTML you still need to escape)
-     *
-     * @param string $name
-     * @return FileInfo Self
-     *
-     * @link https://stackoverflow.com/a/42058764
-     * @internal 1. file system reserved https://en.wikipedia.org/wiki/Filename#Reserved_characters_and_words
-     * phpcs:ignore
-     * @internal 2. control characters http://msdn.microsoft.com/en-us/library/windows/desktop/aa365247%28v=vs.85%29.aspx
-     * @internal 3. URI reserved https://www.rfc-editor.org/rfc/rfc3986#section-2.2
-     * @internal 4. URL unsafe characters https://www.ietf.org/rfc/rfc1738.txt
+     * Sanitizing is not escaping: output to HTML still needs escaping. See `Filename` for the
+     * rules and why each one is there.
      */
     public function setName(string $name): FileInfo
     {
@@ -140,68 +122,21 @@ class FileInfo extends SplFileInfo implements FileInfoInterface
 
     protected function sanitizeName(string $name): string
     {
-        $name = str_replace(['%20', '+', '.'], '-', $name); //replaces encoded space, +, or .
-        $name = (string) preg_replace('/[\r\n\t-]+/', '-', $name); //replace tab or new line characters
-        $name = (string) preg_replace(
-            '~
-        [%<>:"/\\\|?*]|          # @internal 1.
-        [\x00-\x1F]|            # @internal 2.
-        [#\[\]@!$&\'()+,;=]|    # @internal 3.
-        [{}^\~`]                # @internal 4.
-        ~x',
-            '-',
-            $name
-        );
-
-        // reduce consecutive characters
-        $name = (string) preg_replace(
-            [
-                '/ +/', // "file   name.zip" becomes "file name.zip"
-                '/_+/', // "file___name.zip" becomes "file_name.zip"
-                '/ - -+/', // "file - -name.zip" becomes "file--name.zip"
-                '/-+/', // "file--name.zip" becomes "file-name.zip"
-            ],
-            [
-                ' ',
-                '_',
-                '-',
-                '-',
-            ],
-            $name
-        );
-
-        $name = trim((string)$name, '.-_ '); //remove dot, hyphen, underscore, or space from start and end of string
-
-        /* Ensure filename is not a reserved Windows name, otherwise remove */
-        if (in_array(strtolower($name), $this->getReservedWindowsNames(), true)) {
-            $name = '';
-        }
-
-        /*
-         * Ensure filename is not longer than 255 bytes http://serverfault.com/a/9548/44086, otherwise shorten
-         */
-        $extension = $this->getExtension();
-        $maxLength = 255 - ($extension ? strlen($extension) + 1 : 0);
-
-        /* Use multibyte aware functions, if the server supports it */
-        if (function_exists('mb_strcut') && function_exists('mb_detect_encoding')) {
-            $name = mb_strcut($name, 0, $maxLength, (string)mb_detect_encoding($name));
-        } else {
-            $name = substr($name, 0, $maxLength);
-        }
-
-        if (empty($name)) {
-            $name = 'unnamed-file';
-        }
-
-        return $name;
+        return Filename::sanitizeName($name, $this->getExtension(), $this->getReservedWindowsNames());
     }
 
     /**
-     * Get file extension (without dot prefix)
+     * Refit a sanitized name to the byte budget it shares with the current extension
      *
-     * @return string
+     * Separate from `sanitizeName()` because `setExtension()` has to redo the fit alone.
+     *
+     * @link http://serverfault.com/a/9548/44086
      */
+    private function finalizeName(string $name): string
+    {
+        return Filename::finalize($name, $this->getExtension(), $this->getReservedWindowsNames());
+    }
+
     public function getExtension(): string
     {
         return $this->extension;
@@ -210,97 +145,68 @@ class FileInfo extends SplFileInfo implements FileInfoInterface
     /**
      * Set file extension (without dot prefix)
      *
-     * Sanitize the extension (lowercase, alphanumeric)
-     *
-     * @param string $extension
-     * @return FileInfo Self
+     * Validates rather than rewrites: anything not lowercase-alphanumeric once trimmed is
+     * discarded whole, leaving no extension. See `Filename::acceptExtension()` for why.
      */
     public function setExtension(string $extension): FileInfo
     {
-        $extension = strtolower($extension);
-        $extension = trim((string)preg_replace('/[^a-z0-9]/', '', $extension));
+        $this->extension = $this->acceptExtension($extension);
 
-        /* Remove Windows reserved extensions */
-        $extension = str_replace($this->getReservedWindowsNames(), '', $extension);
-
-        $this->extension = $extension;
+        /* The name was fitted against whatever extension was set when setName() ran. Redo it,
+           or `setName(300 chars)` then `setExtension('jpeg')` stores a 260 byte name. */
+        $this->name = $this->finalizeName($this->name);
 
         return $this;
     }
 
     /**
-     * Provide a list of reserved extensions / filenames in Windows
+     * The extension this class will accept, or `''` for one it will not
      *
-     * @link https://docs.microsoft.com/en-us/windows/win32/fileio/naming-a-file#naming-conventions
+     * Split out from `setExtension()` so `setNameWithExtension()` can set the field without
+     * triggering a name re-fit that its own `setName()` call immediately discards.
+     */
+    private function acceptExtension(string $extension): string
+    {
+        return Filename::acceptExtension($extension, $this->getReservedWindowsNames());
+    }
+
+    /**
+     * A `protected` seam so a subclass can override what this class treats as reserved.
+     * `Storage\FileSystem` deliberately reads the constant instead, so an override cannot
+     * narrow what that layer refuses to write.
      *
      * @return string[]
      */
     protected function getReservedWindowsNames(): array
     {
-        return [
-            'con',
-            'prn',
-            'aux',
-            'nul',
-            'com1',
-            'com2',
-            'com3',
-            'com4',
-            'com5',
-            'com6',
-            'com7',
-            'com8',
-            'com9',
-            'lpt1',
-            'lpt2',
-            'lpt3',
-            'lpt4',
-            'lpt5',
-            'lpt6',
-            'lpt7',
-            'lpt8',
-            'lpt9',
-        ];
+        return Filename::RESERVED_WINDOWS_NAMES;
     }
 
-    /**
-     * Get file name with extension
-     *
-     * @return string
-     */
     public function getNameWithExtension(): string
     {
         return $this->extension === '' ? $this->name : sprintf('%s.%s', $this->name, $this->extension);
     }
 
-    /**
-     * Set the file name with extension
-     *
-     * @param string $name
-     * @return $this
-     */
     public function setNameWithExtension(string $name): FileInfo
     {
-        $this->setExtension(pathinfo($name, PATHINFO_EXTENSION));
+        /* Not setExtension(): that re-fits the name to the new budget, and the setName() below
+           overwrites the result unconditionally. Assign the extension, then let setName() do
+           the one fit that survives. */
+        $this->extension = $this->acceptExtension(pathinfo($name, PATHINFO_EXTENSION));
         $this->setName(pathinfo($name, PATHINFO_FILENAME));
 
         return $this;
     }
 
-    /**
-     * Get mimetype
-     *
-     * @return string
-     */
     public function getMimetype(): string
     {
-        if (empty($this->mimetype)) {
+        if (empty($this->mimetype) && $this->isReadableFile()) {
             $finfo = new finfo(FILEINFO_MIME);
             $mimetype = $finfo->file($this->getPathname());
             $mimetypeParts = (array)preg_split('/\s*[;,]\s*/', (string)$mimetype);
 
             if (isset($mimetypeParts[0])) {
-                $this->mimetype = strtolower((string)$mimetypeParts[0]);
+                $this->mimetype = AsciiCase::toLower((string)$mimetypeParts[0]);
             }
             unset($finfo);
         }
@@ -309,34 +215,60 @@ class FileInfo extends SplFileInfo implements FileInfoInterface
     }
 
     /**
-     * Get md5
-     *
-     * @return string
-     */
-    public function getMd5(): string
-    {
-        return (string)md5_file($this->getPathname());
-    }
-
-    /**
      * Get a specified hash
      *
-     * @param string $algorithm
-     * @return string
+     * The default is SHA-256. MD5 is still reachable as `getHash('md5')`, but chosen-prefix
+     * collisions against it are practical, so it cannot carry an integrity or identity
+     * decision about content someone else supplied.
+     *
+     * @param string $algorithm Any algorithm supported by `hash_algos()`
+     * @return string Empty string if the file cannot be read
+     * @throws \InvalidArgumentException If the algorithm is not supported by this PHP build
      */
-    public function getHash(string $algorithm = 'md5'): string
+    public function getHash(string $algorithm = 'sha256'): string
     {
-        return hash_file($algorithm, $this->getPathname());
+        /* Not Upload\Exception: File::isValid() catches that and formats it into getErrors(),
+           so a misspelled algorithm would reach the end user as a rejected file instead of the
+           developer as broken code. InvalidArgumentException is a LogicException, which
+           isValid() deliberately does not absorb. */
+        if (!in_array(AsciiCase::toLower($algorithm), hash_algos(), true)) {
+            throw new \InvalidArgumentException(
+                sprintf('Unsupported hashing algorithm: %s', $algorithm)
+            );
+        }
+
+        if (!$this->isReadableFile()) {
+            return '';
+        }
+
+        return (string)hash_file($algorithm, $this->getPathname());
     }
 
     /**
-     * Get image dimensions
+     * Get file size in bytes
      *
-     * @return array<string, float|int> formatted array of dimensions
+     * `SplFileInfo::getSize()` throws a `RuntimeException` when the file cannot be stat'd.
+     * `FileInfoInterface` documents `int|false`, so an unreadable file reports `false`
+     * rather than aborting a validation run.
+     *
+     * @return int|false
+     */
+    #[\ReturnTypeWillChange]
+    public function getSize()
+    {
+        if (!$this->isReadableFile()) {
+            return false;
+        }
+
+        return parent::getSize();
+    }
+
+    /**
+     * @return array<string, float|int>
      */
     public function getDimensions(): array
     {
-        $imageSize = getimagesize($this->getPathname());
+        $imageSize = $this->isReadableFile() ? getimagesize($this->getPathname()) : false;
         if (!$imageSize) {
             $imageSize = [0,0];
         }
@@ -350,13 +282,24 @@ class FileInfo extends SplFileInfo implements FileInfoInterface
     /**
      * Is this file uploaded with a POST request?
      *
-     * This is a separate method so that it can be stubbed in unit tests to avoid
-     * the hard dependency on the `is_uploaded_file` function.
-     *
-     * @return bool
+     * A separate method so tests can stub out the `is_uploaded_file()` dependency.
      */
     public function isUploadedFile(): bool
     {
         return is_uploaded_file($this->getPathname());
+    }
+
+    /**
+     * Is there actually a readable file behind this pathname?
+     *
+     * A `FileInfo` can legitimately wrap a path that no longer resolves, so the metadata
+     * accessors check this first and degrade instead of raising `ValueError`/`RuntimeException`
+     * from the underlying extension.
+     */
+    protected function isReadableFile(): bool
+    {
+        $pathname = $this->getPathname();
+
+        return $pathname !== '' && is_file($pathname) && is_readable($pathname);
     }
 }

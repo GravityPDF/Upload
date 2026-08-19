@@ -1,0 +1,12 @@
+parameters:
+    level: 9
+    paths:
+        - src
+        - tests
+
+    # The library supports PHP 7.3 through 8.5, so analyse against the whole range rather
+    # than whatever version happens to run the job. PHPStan itself needs 7.4+ to run, so it
+    # can no longer be run *on* the oldest supported version to check against it.
+    phpVersion:
+        min: 70300
+        max: 80500
