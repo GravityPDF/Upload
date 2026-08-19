@@ -6,7 +6,6 @@
  * @author      Josh Lockhart <info@joshlockhart.com>
  * @copyright   2012 Josh Lockhart
  * @link        http://www.joshlockhart.com
- * @version     2.0.0
  *
  * MIT LICENSE
  *
@@ -51,22 +50,30 @@ interface FileInfoInterface
     public function getName(): string;
 
     /**
-     * @param string $name
-     * @return FileInfo
+     * No native return type on the three setters below, so an implementation that is not a
+     * `FileInfo` can return `$this`. Declaring `: FileInfo` here made the interface depend on its
+     * own implementation, and no other class could narrow its return type to match, because
+     * covariant returns arrived in PHP 7.4 and this library supports 7.3. `FileInfo` still declares
+     * `: FileInfo` on its own methods; adding a return type where the interface declares none has
+     * always been allowed.
+     *
+     * @return FileInfoInterface
      */
-    public function setName(string $name): FileInfo;
+    public function setName(string $name);
 
     public function getExtension(): string;
 
     /**
-     * @param string $extension
-     * @return FileInfo
+     * @return FileInfoInterface
      */
-    public function setExtension(string $extension): FileInfo;
+    public function setExtension(string $extension);
 
     public function getNameWithExtension(): string;
 
-    public function setNameWithExtension(string $filename): FileInfo;
+    /**
+     * @return FileInfoInterface
+     */
+    public function setNameWithExtension(string $filename);
 
     public function getMimetype(): string;
 
@@ -75,7 +82,12 @@ interface FileInfoInterface
      */
     public function getSize();
 
-    public function getMd5(): string;
+    /**
+     * @throws \InvalidArgumentException If this PHP build does not support the algorithm.
+     *                                   `File::isValid()` lets that escape rather than
+     *                                   reporting it as a rejected file.
+     */
+    public function getHash(string $algorithm = 'sha256'): string;
 
     /**
      * @return array<string, int|float>

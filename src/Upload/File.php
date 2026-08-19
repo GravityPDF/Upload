@@ -6,7 +6,6 @@
  * @author      Josh Lockhart <info@joshlockhart.com>
  * @copyright   2012 Josh Lockhart
  * @link        http://www.joshlockhart.com
- * @version     2.0.0
  *
  * MIT LICENSE
  *
@@ -37,34 +36,26 @@ namespace GravityPdf\Upload;
 use ArrayAccess;
 use ArrayIterator;
 use Countable;
+use BadMethodCallException;
 use InvalidArgumentException;
+use LogicException;
 use IteratorAggregate;
 use RuntimeException;
 
 /**
- * File
- *
- * This class provides the implementation for an uploaded file. It exposes
- * common attributes for the uploaded file (e.g. name, extension, media type)
- * and allows you to attach validations to the file that must pass for the
- * upload to succeed.
+ * The uploaded files under one `$_FILES` key, with the validations they must pass
  *
  * @author  Josh Lockhart <info@joshlockhart.com>
  * @since   1.0.0
  * @package Upload
- */
-
-/**
+ *
  * @implements IteratorAggregate<int, FileInfoInterface>
  * @implements ArrayAccess<int, FileInfoInterface>
  * @mixin FileInfoInterface
  */
 class File implements ArrayAccess, IteratorAggregate, Countable
 {
-    /**
-     * Upload error code messages
-     * @var string[]
-     */
+    /** @var string[] Upload error code messages */
     protected static $errorCodeMessages = [
         1 => 'The uploaded file exceeds the upload_max_filesize directive in php.ini',
         2 => 'The uploaded file exceeds the MAX_FILE_SIZE directive that was specified in the HTML form',
@@ -75,52 +66,37 @@ class File implements ArrayAccess, IteratorAggregate, Countable
         8 => 'A PHP extension stopped the file upload',
     ];
 
-    /**
-     * Storage delegate
-     * @var StorageInterface
-     */
+    /** @var StorageInterface Storage delegate */
     protected $storage;
 
-    /**
-     * File information
-     * @var FileInfoInterface[]
-     */
+    /** @var FileInfoInterface[] File information */
     protected $objects = [];
 
-    /**
-     * Validations
-     * @var ValidationInterface[]
-     */
+    /** @var ValidationInterface[] */
     protected $validations = [];
 
-    /**
-     * Validation errors
-     * @var string[]
-     */
+    /** @var string[] Validation errors */
     protected $errors = [];
 
-    /**
-     * Before validation callback
-     * @var callable
-     */
+    /** @var bool Has the caller accepted storing files without validating them? */
+    protected $allowUnvalidated = false;
+
+    /** @var string[] Errors recorded during construction, which `isValid()` must not discard */
+    protected $constructorErrors = [];
+
+    /** @var string[] Destination paths written by the most recent `upload()` call */
+    protected $uploadedFiles = [];
+
+    /** @var callable|null */
     protected $beforeValidationCallback;
 
-    /**
-     * After validation callback
-     * @var callable
-     */
+    /** @var callable|null */
     protected $afterValidationCallback;
 
-    /**
-     * Before upload callback
-     * @var callable
-     */
+    /** @var callable|null */
     protected $beforeUploadCallback;
 
-    /**
-     * After upload callback
-     * @var callable
-     */
+    /** @var callable|null */
     protected $afterUploadCallback;
 
     /**
@@ -133,64 +109,131 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      */
     public function __construct(string $key, StorageInterface $storage)
     {
-        // Check if file uploads are allowed
         if (!ini_get('file_uploads')) {
             throw new RuntimeException('File uploads are disabled in your PHP.ini file');
         }
 
-        // Check if key exists
         if (isset($_FILES[$key]) === false) {
             throw new InvalidArgumentException("Cannot find uploaded file(s) identified by key: $key");
         }
 
-        // Collect file info
-        if (is_array($_FILES[$key]['tmp_name']) === true) {
+        /* The SAPI always builds the entry as an array with these three keys; a PSR-7 bridge,
+           a test harness or middleware need not, and a string here made `['tmp_name']` an
+           uncaught TypeError on PHP 8. */
+        if (
+            is_array($_FILES[$key]) === false
+            || array_key_exists('tmp_name', $_FILES[$key]) === false
+            || array_key_exists('name', $_FILES[$key]) === false
+            || array_key_exists('error', $_FILES[$key]) === false
+        ) {
+            $this->errors[] = 'An uploaded file was sent in a format that cannot be read';
+        } elseif (is_array($_FILES[$key]['tmp_name']) === true) {
+            /* The SAPI builds every key of a multi-file entry as an array of the same length.
+               Indexing one that is not is worse than useless: a string `name` yields a single
+               character, which passes the check below and stores the file as `s`. Reduced to
+               `[]` so that check sees a missing entry instead. */
+            $names = is_array($_FILES[$key]['name']) ? $_FILES[$key]['name'] : [];
+            $errorCodes = is_array($_FILES[$key]['error']) ? $_FILES[$key]['error'] : [];
+
             foreach ($_FILES[$key]['tmp_name'] as $index => $tmpName) {
-                if ($_FILES[$key]['error'][$index] !== UPLOAD_ERR_OK) {
-                    $this->errors[] = sprintf(
-                        '%s: %s',
-                        $_FILES[$key]['name'][$index],
-                        static::$errorCodeMessages[$_FILES[$key]['error'][$index]] ?? 'Unknown Error'
-                    );
+                $name = $names[$index] ?? null;
+                $errorCode = $errorCodes[$index] ?? null;
+
+                /* A field named `f[0][0]` nests one level deeper than the two shapes this class
+                   knows, leaving an array where a path belongs: no single upload to represent,
+                   and casting it warns "Array to string conversion" on remote input. Same for
+                   the other two keys, which a ragged or mistyped entry leaves short. */
+                if (is_string($tmpName) === false || is_string($name) === false || is_int($errorCode) === false) {
+                    $this->errors[] = 'An uploaded file was sent in a format that cannot be read';
                     continue;
                 }
 
-                $this->objects[] = FileInfo::createFromFactory(
-                    $_FILES[$key]['tmp_name'][$index],
-                    $_FILES[$key]['name'][$index]
-                );
-            }
-        } else {
-            if ($_FILES[$key]['error'] !== UPLOAD_ERR_OK) {
-                $this->errors[] = sprintf(
-                    '%s: %s',
-                    $_FILES[$key]['name'],
-                    static::$errorCodeMessages[$_FILES[$key]['error']] ?? 'Unknown Error'
-                );
-            }
+                if ($errorCode !== UPLOAD_ERR_OK) {
+                    $this->errors[] = $this->formatUploadError($name, $errorCode);
+                    continue;
+                }
 
+                $this->objects[] = FileInfo::createFromFactory($tmpName, $name);
+            }
+        } elseif (
+            is_string($_FILES[$key]['tmp_name']) === false
+            || is_string($_FILES[$key]['name']) === false
+            || is_int($_FILES[$key]['error']) === false
+        ) {
+            /* The multi-file guard above, for the same reason: a non-string here is an uncaught
+               TypeError out of createFromFactory(). The code is checked too because `(int) [0]`
+               is 1, which reported the file as exceeding `upload_max_filesize`. */
+            $this->errors[] = 'An uploaded file was sent in a format that cannot be read';
+        } elseif ($_FILES[$key]['error'] !== UPLOAD_ERR_OK) {
+            /* No file behind a failed upload: `tmp_name` is '' for UPLOAD_ERR_NO_FILE */
+            $this->errors[] = $this->formatUploadError(
+                $_FILES[$key]['name'],
+                $_FILES[$key]['error']
+            );
+        } else {
             $this->objects[] = FileInfo::createFromFactory(
                 $_FILES[$key]['tmp_name'],
                 $_FILES[$key]['name']
             );
         }
 
+        $this->constructorErrors = $this->errors;
         $this->storage = $storage;
     }
 
+    /**
+     * Build an error string for a `$_FILES` entry that never became an upload, from the raw
+     * client-supplied `$name` and an `UPLOAD_ERR_*` code
+     *
+     * Sanitizes the filename so every string in `$this->errors` carries the same guarantee:
+     * the README encourages callers to render `getErrors()` directly.
+     */
+    private function formatUploadError(string $name, int $errorCode): string
+    {
+        return sprintf(
+            '%s: %s',
+            Filename::sanitizeNameWithExtension($name),
+            static::$errorCodeMessages[$errorCode] ?? 'Unknown Error'
+        );
+    }
+
+    /**
+     * A file's name, sanitized for use in an error string
+     *
+     * `FileInfoInterface` is a public extension point, so a name one returns has not
+     * necessarily been through `FileInfo::setName()`: without this a custom implementation
+     * could put a line break, a terminal escape or a bidi override into a string callers
+     * render. Sanitizing is not escaping — the result still needs escaping where it lands.
+     */
+    private function getSanitizedFilename(FileInfoInterface $fileInfo): string
+    {
+        return Filename::sanitizeNameWithExtension($fileInfo->getNameWithExtension());
+    }
+
     /********************************************************************************
-     * Callbacks
+     * Helpers
      *******************************************************************************/
 
     /**
-     * Convert human readable file size (e.g. "10K" or "3M") into bytes
+     * Convert a human readable file size ("10K", "0.5M", "5MB") into bytes
      *
-     * @param string $input
-     * @return int
+     * Anything unparseable raises, an unrecognized unit included, rather than evaluating to
+     * zero or a handful of bytes — either configures a `Size` bound that rejects every upload
+     * while reading as a generous one.
+     *
+     * @throws InvalidArgumentException If the input cannot be parsed as a file size
      */
     public static function humanReadableToBytes(string $input): int
     {
-        $number = (int)$input;
+        if (preg_match('/^\s*(\d+(?:\.\d+)?)\s*([bkmg])?b?\s*$/i', $input, $matches) !== 1) {
+            throw new InvalidArgumentException(
+                sprintf(
+                    'Could not parse "%s" as a file size. Expected a positive number, '
+                    . 'optionally followed by B, K, M or G.',
+                    $input
+                )
+            );
+        }
 
         $units = [
             'b' => 1,
@@ -199,21 +242,21 @@ class File implements ArrayAccess, IteratorAggregate, Countable
             'g' => 1073741824,
         ];
 
-        $unit = strtolower(substr($input, -1));
+        /* The pattern admits only these four units, so the fallback is the no-unit case and
+           nothing else. Matching `[a-z]` made `'1T'` a one byte limit that rejected every
+           upload — the failure the throw above exists to prevent. */
+        $unit = AsciiCase::toLower($matches[2] ?? '');
+        $number = (float)$matches[1] * ($units[$unit] ?? 1);
 
-        if (isset($units[$unit])) {
-            $number *= $units[$unit];
+        /* Returning a float here is a TypeError; a bound larger than PHP can count is PHP_INT_MAX */
+        if ($number >= (float)PHP_INT_MAX) {
+            return PHP_INT_MAX;
         }
 
-        return $number;
+        return (int)$number;
     }
 
-    /**
-     * Set `beforeValidation` callable
-     *
-     * @param callable $callable Should accept one `\GravityPdf\Upload\FileInfoInterface` argument
-     * @return File                        Self
-     */
+    /** Set the `beforeValidation` callable, which receives one `FileInfoInterface` */
     public function beforeValidate(callable $callable): File
     {
         $this->beforeValidationCallback = $callable;
@@ -221,12 +264,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
         return $this;
     }
 
-    /**
-     * Set `afterValidation` callable
-     *
-     * @param callable $callable Should accept one `\GravityPdf\Upload\FileInfoInterface` argument
-     * @return File                        Self
-     */
+    /** Set the `afterValidation` callable, which receives one `FileInfoInterface` */
     public function afterValidate(callable $callable): File
     {
         $this->afterValidationCallback = $callable;
@@ -234,12 +272,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
         return $this;
     }
 
-    /**
-     * Set `beforeUpload` callable
-     *
-     * @param callable $callable Should accept one `\GravityPdf\Upload\FileInfoInterface` argument
-     * @return File                        Self
-     */
+    /** Set the `beforeUpload` callable, which receives one `FileInfoInterface` */
     public function beforeUpload(callable $callable): File
     {
         $this->beforeUploadCallback = $callable;
@@ -247,12 +280,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
         return $this;
     }
 
-    /**
-     * Set `afterUpload` callable
-     *
-     * @param callable $callable Should accept one `\GravityPdf\Upload\FileInfoInterface` argument
-     * @return File                        Self
-     */
+    /** Set the `afterUpload` callable, which receives one `FileInfoInterface` */
     public function afterUpload(callable $callable): File
     {
         $this->afterUploadCallback = $callable;
@@ -264,12 +292,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      * Validation and Error Handling
      *******************************************************************************/
 
-    /**
-     * Add file validations
-     *
-     * @param ValidationInterface[] $validations
-     * @return File                       Self
-     */
+    /** @param ValidationInterface[] $validations */
     public function addValidations(array $validations): File
     {
         foreach ($validations as $validation) {
@@ -279,12 +302,6 @@ class File implements ArrayAccess, IteratorAggregate, Countable
         return $this;
     }
 
-    /**
-     * Add file validation
-     *
-     * @param ValidationInterface $validation
-     * @return File                Self
-     */
     public function addValidation(ValidationInterface $validation): File
     {
         $this->validations[] = $validation;
@@ -292,28 +309,47 @@ class File implements ArrayAccess, IteratorAggregate, Countable
         return $this;
     }
 
-    /**
-     * Get file validations
-     *
-     * @return ValidationInterface[]
-     */
+    /** @return ValidationInterface[] */
     public function getValidations(): array
     {
         return $this->validations;
     }
 
     /**
-     * Get file validation errors
+     * Permit `upload()` to run with no validations configured
      *
-     * @return string[]
+     * `upload()` otherwise refuses, because an endpoint that validates nothing is usually
+     * unfinished rather than deliberate. Calling this makes the decision greppable.
      */
+    public function allowUnvalidatedUploads(): File
+    {
+        $this->allowUnvalidated = true;
+
+        return $this;
+    }
+
+    /**
+     * Whether `upload()` will run with no validations configured
+     *
+     * `getValidations()` shows the list is empty; this shows whether that was a decision.
+     */
+    public function allowsUnvalidatedUploads(): bool
+    {
+        return $this->allowUnvalidated;
+    }
+
+    /** @return string[] Validation errors */
     public function getErrors(): array
     {
         return $this->errors;
     }
 
     /**
-     * @param string $name
+     * Proxy an unknown method to the collection
+     *
+     * Returns a scalar for one file, an array for more than one and null for none. The
+     * asymmetry is v1 API compatibility, not an oversight.
+     *
      * @param array<int,mixed> $arguments
      * @return mixed
      */
@@ -328,7 +364,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                 foreach ($this->objects as $object) {
                     $callable = [$object, $name];
                     if (!is_callable($callable)) {
-                        throw new Exception('Method does not exist in FileInfoInterface: ' . $name);
+                        throw new BadMethodCallException('Method does not exist in FileInfoInterface: ' . $name);
                     }
 
                     $result[] = call_user_func_array($callable, $arguments);
@@ -336,7 +372,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
             } else {
                 $callable = [$this->objects[0], $name];
                 if (!is_callable($callable)) {
-                    throw new Exception('Method does not exist in FileInfoInterface: ' . $name);
+                    throw new BadMethodCallException('Method does not exist in FileInfoInterface: ' . $name);
                 }
                 $result = call_user_func_array($callable, $arguments);
             }
@@ -349,17 +385,41 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      * Upload file (delegated to storage object)
      *
      * @return bool
-     * @throws Exception|\Exception If validation fails
+     * @throws Exception If validation fails, or if there is nothing to upload
+     * @throws LogicException If nothing has been configured to validate against
      */
     public function upload(): bool
     {
+        /* Before the guards, not after: a throw would otherwise leave the previous call's
+           paths in place, and the documented rollback loop would unlink files an earlier
+           successful upload legitimately stored. */
+        $this->uploadedFiles = [];
+
+        /* LogicException, not Upload\Exception: the developer forgot to configure the object,
+           no file failed. Catching Upload\Exception is how callers handle a rejected upload,
+           and this must not land in that branch. */
+        if (count($this->validations) === 0 && $this->allowUnvalidated === false) {
+            throw new LogicException(
+                'No validations have been added. Add at least one (Validation\FileType and '
+                . 'Validation\Size cover most cases), or call allowUnvalidatedUploads() to '
+                . 'store whatever is submitted.'
+            );
+        }
+
         if ($this->isValid() === false) {
             throw new Exception('File validation failed');
         }
 
+        /* Validations pass vacuously with nothing to run against, so without this the method
+           reports success having stored nothing. After isValid(), so a failed transfer still
+           reports through getErrors(). */
+        if (count($this->objects) === 0) {
+            throw new Exception('There are no files to upload');
+        }
+
         foreach ($this->objects as $fileInfo) {
             $this->applyCallback('beforeUploadCallback', $fileInfo);
-            $this->storage->upload($fileInfo);
+            $this->uploadedFiles[] = $this->storage->upload($fileInfo);
             $this->applyCallback('afterUploadCallback', $fileInfo);
         }
 
@@ -367,53 +427,76 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     }
 
     /**
+     * Destination paths written by the most recent `upload()` call
+     *
+     * A multi-file upload is not atomic, and `getErrors()` stays empty when a storage failure
+     * aborts it, so this is how a caller finds out what is already on disk.
+     *
+     * @return string[]
+     */
+    public function getUploadedLocators(): array
+    {
+        return $this->uploadedFiles;
+    }
+
+    /**
      * Is this collection valid and without errors?
      *
-     * @return bool
-     * @throws \Exception
+     * Re-runs every validation on every call rather than memoizing the result: `upload()`
+     * calls this again, and a `setExtension()` in between must not skip revalidation.
+     *
+     * @throws LogicException Unabsorbed from a validator: broken code, not a failed file
+     * @throws \Throwable From a user callback
      */
     public function isValid(): bool
     {
+        /* Reset rather than append: upload() calls isValid() again, so the
+           `if (!$file->isValid()) {…} $file->upload();` pattern would double every error */
+        $this->errors = $this->constructorErrors;
+
         foreach ($this->objects as $fileInfo) {
-            // Before validation callback
             $this->applyCallback('beforeValidationCallback', $fileInfo);
 
-            // Check is uploaded file
+            /* Not a `continue`: the validation callbacks are documented as a matched pair
+               firing once per file, so a caller can open and close a per-file resource with
+               them. Skipping the after-hook leaks on exactly the files that failed. */
             if ($fileInfo->isUploadedFile() === false) {
                 $this->errors[] = sprintf(
                     '%s: %s',
-                    $fileInfo->getNameWithExtension(),
+                    $this->getSanitizedFilename($fileInfo),
                     'Is not an uploaded file'
                 );
-                continue;
-            }
+            } else {
+                /* Hoisted: sanitizing is several regex passes, and every failure reuses it */
+                $sanitizedFilename = $this->getSanitizedFilename($fileInfo);
 
-            // Apply user validations
-            foreach ($this->validations as $validation) {
-                try {
-                    $validation->validate($fileInfo);
-                } catch (Exception $e) {
-                    $this->errors[] = sprintf(
-                        '%s: %s',
-                        $fileInfo->getNameWithExtension(),
-                        $e->getMessage()
-                    );
+                foreach ($this->validations as $validation) {
+                    try {
+                        $validation->validate($fileInfo);
+                    } catch (Exception $e) {
+                        $this->errors[] = sprintf('%s: %s', $sanitizedFilename, $e->getMessage());
+                    } catch (LogicException $e) {
+                        /* By PHP's own definition a bug in the program, not a failed file.
+                           Absorbed, `getHash('sha255')` in a validator would be reported as a
+                           rejected upload, leaving the developer nothing to go on. */
+                        throw $e;
+                    } catch (\Throwable $e) {
+                        /* ValidationInterface is an extension point: absorb, so one validator
+                           cannot abort the batch and bypass error accumulation. Nothing the
+                           throwable carries reaches this string — a runtime message can hold an
+                           absolute path, a class name is internal structure, and getErrors() is
+                           shown to end users. Rethrow an Upload\Exception to surface either. */
+                        $this->errors[] = sprintf('%s: Validation could not be completed', $sanitizedFilename);
+                    }
                 }
             }
 
-            // After validation callback
             $this->applyCallback('afterValidationCallback', $fileInfo);
         }
 
         return empty($this->errors);
     }
 
-    /**
-     * Apply callable
-     *
-     * @param string $callbackName
-     * @param FileInfoInterface $file
-     */
     protected function applyCallback(string $callbackName, FileInfoInterface $file): void
     {
         $allowedCallbackName = [
@@ -438,10 +521,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      * Array Access Interface
      *******************************************************************************/
 
-    /**
-     * @param mixed $offset
-     * @return bool
-     */
+    /** @param mixed $offset */
     public function offsetExists($offset): bool
     {
         return isset($this->objects[$offset]);
@@ -460,17 +540,21 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     /**
      * @param mixed $offset
      * @param FileInfoInterface $value
-     * @return void
+     * @throws InvalidArgumentException If the value is not a FileInfoInterface
      */
     public function offsetSet($offset, $value): void
     {
+        /* The type in the docblock is not enforced at runtime; anything else faults later, inside isValid() */
+        if (!$value instanceof FileInfoInterface) {
+            throw new InvalidArgumentException(
+                'Value must be an instance of ' . FileInfoInterface::class
+            );
+        }
+
         $this->objects[$offset] = $value;
     }
 
-    /**
-     * @param mixed $offset
-     * @return void
-     */
+    /** @param mixed $offset */
     public function offsetUnset($offset): void
     {
         unset($this->objects[$offset]);
@@ -487,10 +571,6 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     {
         return new ArrayIterator($this->objects);
     }
-
-    /********************************************************************************
-     * Helpers
-     *******************************************************************************/
 
     /********************************************************************************
      * Countable Interface

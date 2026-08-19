@@ -3,9 +3,9 @@
 /**
  * Upload
  *
- * @author      Josh Lockhart <info@joshlockhart.com>
- * @copyright   2012 Josh Lockhart
- * @link        http://www.joshlockhart.com
+ * @author      Gravity PDF
+ * @copyright   2026 Gravity PDF
+ * @link        https://github.com/GravityPDF/Upload
  *
  * MIT LICENSE
  *
@@ -34,25 +34,37 @@ declare(strict_types=1);
 namespace GravityPdf\Upload;
 
 /**
- * Storage Interface
+ * Case folding that does not depend on the host's locale
  *
- * @author  Josh Lockhart <info@joshlockhart.com>
- * @since   2.0.0
+ * `strtolower()` follows `LC_CTYPE` before PHP 8.2, so an application that calls
+ * `setlocale()` changes what this library considers the same string. Under a Turkish locale
+ * `strtolower('TIFF')` is `t<U+0131>ff`, which `FileInfo::setExtension()` then discards as
+ * containing something other than letters and digits — a valid upload stored with no
+ * extension, on four of the eight supported versions (7.3, 7.4, 8.0 and 8.1).
+ *
+ * Every value folded in this library is an extension, a media type, a hash algorithm or a
+ * reserved device name: ASCII by definition, so folding only ASCII loses nothing.
+ *
+ * @internal Not part of the public API
+ *
+ * @since   4.0.0
+ *
  * @package Upload
  */
-interface StorageInterface
+final class AsciiCase
 {
     /**
-     * Upload the file and return a locator for it, in whatever form this storage defines:
-     * `Storage\FileSystem` returns its directory joined to the filename, another storage an S3 key, a URL, an
-     * identifier. `File::getUploadedLocators()` hands these back unchanged, so an application rolling
-     * back a failed multi-file upload has to undo them the way its own storage does — `unlink()`
-     * is right only for a storage that returns local paths.
+     * Lowercase the ASCII letters in a string and leave every other byte alone
      *
-     * Never return the empty string: a caller cannot tell it apart from a value it can act on.
-     * Throw instead.
-     *
-     * @throws \Exception If the file cannot be stored
+     * @param string $value
+     * @return string
      */
-    public function upload(FileInfoInterface $fileInfo): string;
+    public static function toLower(string $value): string
+    {
+        return strtr(
+            $value,
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+            'abcdefghijklmnopqrstuvwxyz'
+        );
+    }
 }

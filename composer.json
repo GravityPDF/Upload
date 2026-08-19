@@ -28,11 +28,14 @@
     "php": "^7.3 || ~8.0.0 || ~8.1.0 || ~8.2.0 || ~8.3.0 || ~8.4.0 || ~8.5.0",
     "ext-fileinfo": "*"
   },
+  "suggest": {
+    "ext-mbstring": "Truncates sanitized filenames on a character boundary and guarantees they are valid UTF-8"
+  },
   "require-dev": {
     "yoast/phpunit-polyfills": "^1.0",
     "php-parallel-lint/php-parallel-lint": "^1.3",
     "phpstan/phpstan": "^1.8",
-    "squizlabs/php_codesniffer": "*"
+    "squizlabs/php_codesniffer": "^4.0"
   },
   "autoload": {
     "psr-4": {
