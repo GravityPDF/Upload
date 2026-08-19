@@ -45,13 +45,30 @@ use RuntimeException;
 /**
  * The uploaded files under one `$_FILES` key, with the validations they must pass
  *
+ * `__call()` proxies the `FileInfoInterface` methods listed below to the collection,
+ * returning the file's own value for one file, an array of them for more than one and `null`
+ * for none. They are declared as `@method` rather than inherited through `@mixin` because a
+ * mixin promises the interface's own return type, hiding both halves of that asymmetry.
+ *
  * @author  Josh Lockhart <info@joshlockhart.com>
  * @since   1.0.0
  * @package Upload
  *
  * @implements IteratorAggregate<int, FileInfoInterface>
  * @implements ArrayAccess<int, FileInfoInterface>
- * @mixin FileInfoInterface
+ *
+ * @method string|string[]|null getPathname()
+ * @method string|string[]|null getName()
+ * @method string|string[]|null getExtension()
+ * @method string|string[]|null getNameWithExtension()
+ * @method string|string[]|null getMimetype()
+ * @method string|string[]|null getHash(string $algorithm = 'sha256')
+ * @method int|false|array<int,int|false>|null getSize()
+ * @method array<string,float|int>|array<int,array<string,float|int>>|null getDimensions()
+ * @method bool|bool[]|null isUploadedFile()
+ * @method FileInfoInterface|FileInfoInterface[]|null setName(string $name)
+ * @method FileInfoInterface|FileInfoInterface[]|null setExtension(string $extension)
+ * @method FileInfoInterface|FileInfoInterface[]|null setNameWithExtension(string $filename)
  */
 class File implements ArrayAccess, IteratorAggregate, Countable
 {
@@ -521,14 +538,14 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      * Array Access Interface
      *******************************************************************************/
 
-    /** @param mixed $offset */
+    /** @param int $offset */
     public function offsetExists($offset): bool
     {
         return isset($this->objects[$offset]);
     }
 
     /**
-     * @param mixed $offset
+     * @param int $offset
      * @return FileInfoInterface|null
      */
     #[\ReturnTypeWillChange]
@@ -538,8 +555,8 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     }
 
     /**
-     * @param mixed $offset
-     * @param FileInfoInterface $value
+     * @param int $offset
+     * @param mixed $value A FileInfoInterface; the type is checked at runtime, not declared
      * @throws InvalidArgumentException If the value is not a FileInfoInterface
      */
     public function offsetSet($offset, $value): void
@@ -554,7 +571,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
         $this->objects[$offset] = $value;
     }
 
-    /** @param mixed $offset */
+    /** @param int $offset */
     public function offsetUnset($offset): void
     {
         unset($this->objects[$offset]);

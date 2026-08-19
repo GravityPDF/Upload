@@ -177,7 +177,9 @@ class FileSystem implements StorageInterface
      * @return FileSystem Self
      * @throws InvalidArgumentException If the list is empty; call `allowAnyExtension()` instead
      *
-     * @example $storage->blockExtensions(array_merge(FileSystem::getDefaultBlockedExtensions(), ['csv']));
+     * ```php
+     * $storage->blockExtensions(array_merge(FileSystem::getDefaultBlockedExtensions(), ['csv']));
+     * ```
      */
     public function blockExtensions(array $extensions): FileSystem
     {

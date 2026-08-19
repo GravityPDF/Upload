@@ -23,6 +23,8 @@ composer check-syntax            # parallel-lint across all PHP files
 
 `phpunit`, `lint`, `phpstan` and `check-syntax` each have their own GitHub Actions workflow, run on push to `main` and on every PR.
 
+`composer phpstan` bootstraps PHPStan from `tools/phpstan/` rather than the root `require-dev`. PHPStan 2.x needs PHP 7.4 to run, and the root manifest has to stay resolvable on 7.3 or the 7.3 test and PHPCS jobs cannot install at all. `phpstan.neon` sets `phpVersion` to the 7.3-8.5 range, so the analysis still covers the whole supported range from whatever version runs it.
+
 ## Architecture
 
 **`File` is a collection, not a file.** `new File($key, $storage)` reads `$_FILES[$key]` and normalizes both the single-file shape (`tmp_name` is a string) and the multi-file shape (`tmp_name` is an array) into an array of `FileInfoInterface` objects. `File` implements `ArrayAccess`, `IteratorAggregate` and `Countable` over that array.
@@ -125,6 +127,6 @@ With `overwrite = false`, `reserveDestination()` claims the name first with an e
 
 ## Repository notes
 
-- The README, contributing guide and issue templates live in `.github/`, not the repo root.
+- The contributing guide and issue templates live in `.github/`; the README is at the repo root.
 - `CHANGELOG.md` must be updated in the same PR as any user-facing change — it is the documented record of breaking changes between major versions.
 - PRs target `main`; GitHub defaults new PRs to the upstream `codeguy/upload` repo, so the base repo needs correcting manually.

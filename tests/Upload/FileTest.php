@@ -365,7 +365,7 @@ class FileTest extends TestCase
 
         try {
             $file->upload();
-            $this->assertTrue(true);
+            $this->addToAssertionCount(1);
         } catch (\Exception $e) {
             $this->fail('Unexpected exception thrown');
         }
@@ -595,7 +595,14 @@ class FileTest extends TestCase
      */
     public function testAWellFormedFileSurvivesAMalformedSiblingEntry(): void
     {
-        $_FILES['multiple']['error'] = [UPLOAD_ERR_OK, 'nonsense'];
+        $_FILES['multiple'] = [
+            'name' => ['foo.txt', 'bar.txt'],
+            'tmp_name' => [
+                $this->assetsDirectory . '/foo.txt',
+                $this->assetsDirectory . '/bar.txt',
+            ],
+            'error' => [UPLOAD_ERR_OK, 'nonsense'],
+        ];
 
         $file = new File('multiple', $this->storage);
 
@@ -933,7 +940,7 @@ class FileTest extends TestCase
         $this->expectExceptionMessage('Value must be an instance of');
 
         $file = new File('single', $this->storage);
-        $file[0] = 'not-a-file-info'; /* @phpstan-ignore-line */
+        $file[0] = 'not-a-file-info';
     }
 
     /**

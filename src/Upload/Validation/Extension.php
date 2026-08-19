@@ -56,7 +56,10 @@ class Extension implements ValidationInterface
 
     /**
      * @param string|string[] $allowedExtensions Allowed file extensions, without leading dots
-     * @example new \GravityPdf\Upload\Validation\Extension(array('png','jpg','gif'))
+     *
+     * ```php
+     * new \GravityPdf\Upload\Validation\Extension(['png', 'jpg', 'gif']);
+     * ```
      */
     public function __construct($allowedExtensions)
     {

@@ -54,8 +54,10 @@ use InvalidArgumentException;
  * `image/jpeg`, but two formats in a single call pair every extension with every media type
  * and hand back the looseness this class exists to remove.
  *
- * @example new FileType(['jpg', 'jpeg'], 'image/jpeg')
- * @example (new FileType('png', 'image/png'))->allow(['tif', 'tiff'], 'image/tiff')
+ * ```php
+ * new FileType(['jpg', 'jpeg'], 'image/jpeg');
+ * (new FileType('png', 'image/png'))->allow(['tif', 'tiff'], 'image/tiff');
+ * ```
  *
  * @author  Gravity PDF <support@gravitypdf.com>
  * @since   4.0.0

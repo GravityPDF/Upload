@@ -29,7 +29,7 @@ class FileTypeTest extends TestCase
 
         $validation->validate($file);
 
-        $this->assertTrue(true);
+        $this->addToAssertionCount(1);
     }
 
     public function testExtensionNotOnTheListIsRejected(): void
@@ -84,7 +84,7 @@ class FileTypeTest extends TestCase
         $validation->validate(new FileInfo($this->assetsDirectory . '/foo.txt', 'foo.txt'));
         $validation->validate(new FileInfo($this->assetsDirectory . '/foo.txt', 'foo.text'));
 
-        $this->assertTrue(true);
+        $this->addToAssertionCount(1);
     }
 
     public function testOneExtensionAcceptsSeveralMimetypes(): void
@@ -93,7 +93,7 @@ class FileTypeTest extends TestCase
 
         $validation->validate(new FileInfo($this->assetsDirectory . '/foo.txt', 'foo.txt'));
 
-        $this->assertTrue(true);
+        $this->addToAssertionCount(1);
     }
 
     public function testRepeatedExtensionGainsMimetypesRatherThanReplacingThem(): void
@@ -102,7 +102,7 @@ class FileTypeTest extends TestCase
 
         $validation->validate(new FileInfo($this->assetsDirectory . '/foo.txt', 'foo.txt'));
 
-        $this->assertTrue(true);
+        $this->addToAssertionCount(1);
     }
 
     public function testInputIsCaseFolded(): void
@@ -111,7 +111,7 @@ class FileTypeTest extends TestCase
 
         $validation->validate(new FileInfo($this->assetsDirectory . '/foo.txt', 'foo.txt'));
 
-        $this->assertTrue(true);
+        $this->addToAssertionCount(1);
     }
 
     /**
@@ -175,7 +175,7 @@ class FileTypeTest extends TestCase
 
         $validation->validate(new FileInfo($this->assetsDirectory . '/foo.png', 'foo.png'));
 
-        $this->assertTrue(true);
+        $this->addToAssertionCount(1);
     }
 
     /**
@@ -193,7 +193,7 @@ class FileTypeTest extends TestCase
 
         (new FileType('png', 'image/png'))->validate($file);
 
-        $this->assertTrue(true);
+        $this->addToAssertionCount(1);
     }
 
     /**

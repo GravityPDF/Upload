@@ -66,7 +66,7 @@ class FileSystemTest extends TestCase
                 ->setConstructorArgs([$this->assetsDirectory])
                 ->getMock();
 
-            $this->assertTrue(true);
+            $this->addToAssertionCount(1);
         } catch (InvalidArgumentException $e) {
             $this->fail('Unexpected argument thrown during instantiation with valid directory');
         }
@@ -636,7 +636,7 @@ class FileSystemTest extends TestCase
      */
     public function testReadmeDocumentsTheDefaultDenyList(): void
     {
-        $readme = (string)file_get_contents(dirname(__DIR__, 3) . '/.github/README.md');
+        $readme = (string)file_get_contents(dirname(__DIR__, 3) . '/README.md');
 
         if (preg_match('/### Extensions blocked by default(.*?)```/s', $readme, $section) !== 1) {
             $this->fail('The README no longer has an "Extensions blocked by default" table');

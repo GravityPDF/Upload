@@ -362,10 +362,16 @@ $storage->blockExtensions(
 );
 ```
 
-To accept SVG, take the group you want and sanitize the file contents yourself:
+To accept SVG, drop just those two entries rather than the whole markup group, and sanitize
+the file contents yourself:
 
 ```php
-$storage->blockExtensions(\GravityPdf\Upload\Storage\FileSystem::EXECUTABLE_EXTENSIONS);
+$storage->blockExtensions(
+    array_diff(
+        \GravityPdf\Upload\Storage\FileSystem::getDefaultBlockedExtensions(),
+        ['svg', 'svgz']
+    )
+);
 ```
 
 Entries are matched one dot-separated component at a time, and an entry containing dots is

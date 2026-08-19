@@ -15,7 +15,7 @@ composer require gravitypdf/upload:^4.0
 
 PHP 7.3 through 8.5, still requiring only `ext-fileinfo`. `ext-mbstring` is now suggested:
 without it, sanitized filenames aren't guaranteed to be valid UTF-8. See
-[Requirements](.github/README.md#requirements).
+[Requirements](README.md#requirements).
 
 ## 2. `upload()` needs at least one validation
 
@@ -41,7 +41,7 @@ $file->allowUnvalidatedUploads();
 `FileSystem::getDefaultBlockedExtensions()` — things a server executes or reads as config
 (`php`, `cgi`, `exe`, `htaccess`, `config`) and markup a browser renders (`html`, `svg`,
 `js`, `xml`). Full table in the
-[README](.github/README.md#extensions-blocked-by-default).
+[README](README.md#extensions-blocked-by-default).
 
 The refusal throws `\GravityPdf\Upload\Exception` from `upload()`. It isn't a validation
 error, so it doesn't appear in `getErrors()`.
