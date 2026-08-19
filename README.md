@@ -187,6 +187,53 @@ try {
 Individual files are also reachable by offset. Check with `isset($file[0])` first, because
 files that failed to transfer are missing from the collection.
 
+#### Storing only the files that passed
+
+The standard `upload()` flow is all-or-nothing: if any file fails validation, nothing is
+stored. To enable partial uploads on multi-file upload fields call `uploadValid()` instead of `upload()`. It stores each file that passed
+and returns `false` when at least one was rejected.
+
+```php
+// The isValid() bail-out is removed when using $file->uploadValid().
+// Rejected files are reported after the storing
+if (count($file) === 0) {
+    // A transfer that failed outright — too large, nothing selected — leaves the
+    // collection empty, and its message is already in getErrors()
+    foreach ($file->getErrors() as $message) {
+        echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'), '<br>';
+    }
+
+    return;
+}
+
+try {
+    if ($file->uploadValid() === false) {
+        // if false at least one file was rejected (the rest are stored). Display the errors.
+        foreach ($file->getErrors() as $message) {
+            echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'), '<br>';
+        }
+    }
+} catch (\Exception $e) {
+    // The catch now handles storage failures only, which still abort the batch
+    return;
+}
+
+// Loop over the files that were stored, keyed by collection offset
+foreach ($file->getUploadedLocators() as $offset => $storedPath) {
+    // $file[$offset] is the file stored at $storedPath
+}
+```
+
+A file that never transferred is counted as rejected, since its message is in `getErrors()`.
+Storage failures (destination exists, blocked extension, disk full) still throw part-way
+through the batch, which is what the `catch` is left for: `getUploadedLocators()` lists what
+was written before the throw, so a partial batch can be kept or rolled back.
+
+Nothing throws for a rejected file, so the `false` return is the only signal that one was.
+**If you abandon the request on `false`, the files that passed are already on disk** — undo
+them yourself, the way the `catch` above does, or they are left with nothing referencing
+them.
+
 ### Lifecycle callbacks
 
 Four optional hooks fire once per file, each receiving that file's `FileInfoInterface`:
@@ -196,7 +243,8 @@ work like renaming or audit logging without writing your own loops.
 The two validation hooks are a matched pair: `afterValidate` fires for every file
 `beforeValidate` fired for, including one that failed, so they can safely open and close a
 per-file resource. The upload hooks are not a pair — a storage failure throws out of
-`upload()` before `afterUpload` runs.
+`upload()` before `afterUpload` runs. Under `uploadValid()` the upload hooks fire only for
+the files being stored; the validation hooks still fire for every file.
 
 ```php
 use GravityPdf\Upload\FileInfoInterface;
@@ -412,10 +460,11 @@ php.ini, and `InvalidArgumentException` when the key is not in `$_FILES`.
 | `addValidations(array $validations): File` | Add several validation rules at once. |
 | `getValidations(): ValidationInterface[]` | The rules added so far. |
 | `isValid(): bool` | Runs `is_uploaded_file()` plus every validation against every file, accumulating failures. Each call resets the error list and re-validates, so it is idempotent. |
-| `getErrors(): string[]` | All failures from the last `isValid()` run plus any files that failed to transfer, as `"filename: message"`. A `$_FILES` entry too malformed to name a file is reported without the prefix. Sanitized, but must still be escaped on output. |
-| `upload(): bool` | Re-validates, then stores each file via the storage backend. Throws `LogicException` when no validations are configured, and `Exception` when validation fails (details in `getErrors()`), when the collection is empty, or when storage fails (details in the exception message). |
-| `getUploadedLocators(): string[]` | Locators returned by the most recent `upload()`, in whatever form the storage backend defines. Multi-file uploads are not atomic, so after a failure this lists what needs rolling back. |
-| `allowUnvalidatedUploads(): File` | Let `upload()` proceed with no validations configured. |
+| `getErrors(): string[]` | All failures from the last validation run (`isValid()`, `upload()` or `uploadValid()`) plus any files that failed to transfer, as `"filename: message"`. A `$_FILES` entry too malformed to name a file is reported without the prefix. Sanitized, but must still be escaped on output. |
+| `upload(): bool` | Re-validates, then stores each file via the storage backend. All-or-nothing: one file failing validation stores none of them; call `uploadValid()` in its place to store the ones that passed. Throws `LogicException` when no validations are configured, and `Exception` when validation fails (details in `getErrors()`), when the collection is empty, or when storage fails (details in the exception message). |
+| `uploadValid(): bool` | Called in place of `upload()` on a multi-file field when a partial batch is acceptable; on a single-file field it changes nothing but how a rejection is reported. Re-validates, then stores only the files that passed, leaving the rest in `getErrors()`. Returns `true` when every file was stored, `false` when at least one was rejected — a file that failed to transfer counts as rejected. Nothing throws for a rejected file, so that return value is the only signal, and cleaning up what was already stored is the caller's on the `false` branch. Throws the same `LogicException` when no validations are configured, the same `Exception` on an empty collection, and whatever storage throws. |
+| `getUploadedLocators(): string[]` | Locators returned by the most recent `upload()` or `uploadValid()`, in whatever form the storage backend defines. Multi-file uploads are not atomic, so after a failure this lists what needs rolling back; after `uploadValid()` it is the files that passed *and* were stored, which a storage failure part-way through leaves shorter than the set that passed. Keyed by collection offset, so the array is sparse after `uploadValid()` and the locator at `$i` still belongs to `$file[$i]`. |
+| `allowUnvalidatedUploads(): File` | Let `upload()` and `uploadValid()` proceed with no validations configured. |
 | `allowsUnvalidatedUploads(): bool` | Whether that was allowed — an empty `getValidations()` does not say whether it was a decision. |
 | `beforeValidate(callable $callback): File` | Hook run per file before its validations. All four hooks receive that file's `FileInfoInterface`. |
 | `afterValidate(callable $callback): File` | Hook run per file after its validations, including a file that failed them. |

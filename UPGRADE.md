@@ -129,6 +129,22 @@ if (count($file) === 0 || $file->isValid() === false) {
 `upload()` throws on an empty collection rather than returning `true` having stored
 nothing, so check the count if an empty field is a valid outcome for your form.
 
+A multi-file field where only *some* of the files failed behaves as it did in 3.x:
+`upload()` stores all of them or none. Nothing to change unless you want the other
+behaviour. To keep the files that passed, call `uploadValid()` where you call `upload()`
+and check what it returns instead of catching a validation failure.
+
+```php
+if ($file->uploadValid() === false) {
+    // getErrors() names the files that were rejected. The rest are already stored, so
+    // if you abandon the request here, undo getUploadedLocators() yourself
+}
+```
+
+Nothing throws for a rejected file, so that return value is the only signal one was. A
+single-file field gains nothing from the swap — it is stored whole or not at all, and there
+`uploadValid()` only turns the rejection into a `false` return.
+
 ## 8. Invalid extensions are discarded, not repaired
 
 `setExtension()` lowercases and trims, then discards the extension if anything other than
@@ -210,6 +226,13 @@ it instead. The shipped `FileInfo` already rewrites or blanks all of these.
 
 Each of these is listed in full in the [changelog](CHANGELOG.md).
 
+* **`upload()` no longer runs an `isValid()` override.** Both entry points validate through
+  a private method that reports *which* files passed, so `uploadValid()` doesn't have to
+  validate a second time and let a validator with a side effect see every file twice.
+  Validation still runs on every `upload()` call, and `isValid()` is unchanged when you call
+  it yourself — but a `File` subclass that overrode `isValid()` to add a check of its own (a
+  quota, a per-tenant policy, an extra scan) no longer has that check run by `upload()`.
+  **Move it into a `ValidationInterface`**, which both entry points honour.
 * **The storage collision message changed.** `'File already exists'` is now
   `'A file named "report.txt" already exists'` — sanitizing is many-to-one, so the old
   wording couldn't say which name collided. **Update anything matching the old string.**

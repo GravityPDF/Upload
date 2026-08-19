@@ -7,6 +7,7 @@ use GravityPdf\Upload\Validation\Mimetype;
 use GravityPdf\Upload\Validation\Size;
 use GravityPdf\Upload\ValidationInterface;
 use InvalidArgumentException;
+use PHPUnit\Framework\MockObject\MockObject;
 use Yoast\PHPUnitPolyfills\TestCases\TestCase;
 
 class FileTest extends TestCase
@@ -991,5 +992,461 @@ class FileTest extends TestCase
         $file->upload();
 
         $this->assertSame(['/tmp/uploads/foo.txt', '/tmp/uploads/bar.txt'], $file->getUploadedLocators());
+    }
+
+    /********************************************************************************
+     * Partial upload tests
+     *******************************************************************************/
+
+    /**
+     * A storage double with only `upload()` replaced
+     *
+     * `$this->storage` is one of these already, but it is typed as the interface, so a test
+     * that needs to configure or count the call needs its own.
+     *
+     * @return FileSystem&MockObject
+     */
+    protected function mockStorage()
+    {
+        return $this->getMockBuilder(FileSystem::class)
+            ->setConstructorArgs([$this->assetsDirectory])
+            ->onlyMethods(['upload'])
+            ->getMock();
+    }
+
+    /**
+     * A storage double that reports where each file would have landed, so a test can assert
+     * which of them were handed over and in what order
+     */
+    protected function storageNamingWhatItStored(): StorageInterface
+    {
+        $storage = $this->mockStorage();
+
+        $storage->method('upload')->willReturnCallback(static function (FileInfoInterface $fileInfo): string {
+            return '/tmp/uploads/' . $fileInfo->getNameWithExtension();
+        });
+
+        return $storage;
+    }
+
+    /**
+     * Install a `FileInfo` factory whose `isUploadedFile()` answers false for the named files
+     *
+     * `stubUploadedFileCheck()` answers the same for every file; a partial batch needs one
+     * file to fail the check while its sibling passes.
+     *
+     * @param string[] $failing
+     */
+    protected function stubUploadedFileCheckByName(array $failing): void
+    {
+        FileInfo::setFactory(function ($tmpName, $name) use ($failing) {
+            $fileInfo = $this->getMockBuilder(FileInfo::class)
+                ->setConstructorArgs([$tmpName, $name])
+                ->onlyMethods(['isUploadedFile'])
+                ->getMock();
+
+            $fileInfo->method('isUploadedFile')->willReturn(in_array($name, $failing, true) === false);
+
+            return $fileInfo;
+        });
+    }
+
+    /**
+     * A validation that rejects the named files and passes the rest
+     *
+     * @param string[] $reject
+     */
+    protected function rejectByName(array $reject): ValidationInterface
+    {
+        $validation = $this->createMock(ValidationInterface::class);
+        $validation->method('validate')->willReturnCallback(
+            static function (FileInfoInterface $fileInfo) use ($reject): void {
+                if (in_array($fileInfo->getNameWithExtension(), $reject, true)) {
+                    throw new Exception('Rejected');
+                }
+            }
+        );
+
+        return $validation;
+    }
+
+    /**
+     * The point of the method: one rejected file in a `name="photos[]"` field no longer
+     * discards the ones that were fine.
+     */
+    public function testUploadValidStoresTheFilesThatPassedAndReportsTheRest(): void
+    {
+        $file = new File('multiple', $this->storageNamingWhatItStored());
+        $file->addValidation($this->rejectByName(['bar.txt']));
+
+        $this->assertFalse($file->uploadValid());
+        $this->assertSame(['/tmp/uploads/foo.txt'], $file->getUploadedLocators());
+        $this->assertSame(['bar.txt: Rejected'], $file->getErrors());
+    }
+
+    public function testUploadValidReturnsTrueWhenEveryFilePassed(): void
+    {
+        $file = new File('multiple', $this->storageNamingWhatItStored());
+        $file->addValidation(new Mimetype(['text/plain']));
+
+        $this->assertTrue($file->uploadValid());
+        $this->assertSame(['/tmp/uploads/foo.txt', '/tmp/uploads/bar.txt'], $file->getUploadedLocators());
+        $this->assertSame([], $file->getErrors());
+    }
+
+    /**
+     * Nothing passed, so nothing is handed to storage: the return value and an empty
+     * getUploadedLocators() are how the caller tells this from a partial success.
+     */
+    public function testUploadValidStoresNothingWhenEveryFileFails(): void
+    {
+        $storage = $this->mockStorage();
+        $storage->expects($this->never())->method('upload');
+
+        $file = new File('multiple', $storage);
+        $file->addValidation($this->rejectByName(['foo.txt', 'bar.txt']));
+
+        $this->assertFalse($file->uploadValid());
+        $this->assertSame([], $file->getUploadedLocators());
+        $this->assertCount(2, $file->getErrors());
+    }
+
+    /**
+     * A file that never transferred is reported by the constructor rather than by a
+     * validation, but it is still a file the caller asked for and did not get, so the return
+     * value has to say so while its siblings are stored.
+     */
+    public function testUploadValidCountsAFailedTransferAsRejected(): void
+    {
+        $_FILES['partial'] = [
+            'name' => ['foo.txt', 'huge.txt'],
+            'tmp_name' => [$this->assetsDirectory . '/foo.txt', ''],
+            'error' => [UPLOAD_ERR_OK, UPLOAD_ERR_INI_SIZE],
+        ];
+
+        $file = new File('partial', $this->storageNamingWhatItStored());
+        $file->addValidation(new Mimetype(['text/plain']));
+
+        $this->assertFalse($file->uploadValid());
+        $this->assertSame(['/tmp/uploads/foo.txt'], $file->getUploadedLocators());
+        $this->assertSame(
+            ['huge.txt: The uploaded file exceeds the upload_max_filesize directive in php.ini'],
+            $file->getErrors()
+        );
+    }
+
+    /** The upload hooks fire per stored file, so a rejected one must not reach them */
+    public function testUploadValidRunsTheUploadHooksOnlyForTheFilesItStores(): void
+    {
+        $stored = [];
+
+        $file = new File('multiple', $this->storageNamingWhatItStored());
+        $file->addValidation($this->rejectByName(['bar.txt']));
+        $file->beforeUpload(static function (FileInfoInterface $fileInfo) use (&$stored): void {
+            $stored[] = 'before:' . $fileInfo->getNameWithExtension();
+        });
+        $file->afterUpload(static function (FileInfoInterface $fileInfo) use (&$stored): void {
+            $stored[] = 'after:' . $fileInfo->getNameWithExtension();
+        });
+
+        $file->uploadValid();
+
+        $this->assertSame(['before:foo.txt', 'after:foo.txt'], $stored);
+    }
+
+    /**
+     * Both entry points share the guard: storing what passed is not a reason to store it
+     * against nothing.
+     */
+    public function testUploadValidRefusesWhenNothingHasBeenConfiguredToValidate(): void
+    {
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('No validations have been added');
+
+        (new File('multiple', $this->storage))->uploadValid();
+    }
+
+    /**
+     * An empty collection has no valid file to keep, so this is the vacuous success that
+     * upload()'s own count check exists to prevent rather than a partial one.
+     */
+    public function testUploadValidRefusesWhenThereIsNothingToStore(): void
+    {
+        $_FILES['none'] = ['name' => [], 'tmp_name' => [], 'error' => []];
+
+        $file = new File('none', $this->storage);
+        $file->allowUnvalidatedUploads();
+
+        $this->expectException(Exception::class);
+        $this->expectExceptionMessage('There are no files to upload');
+
+        $file->uploadValid();
+    }
+
+    /** The locator list is emptied at the start of the call, as it is for upload() */
+    public function testUploadValidDoesNotReportAnEarlierCallsFiles(): void
+    {
+        $file = new File('multiple', $this->storageNamingWhatItStored());
+        $file->addValidation(new Mimetype(['text/plain']));
+
+        $this->assertTrue($file->uploadValid());
+        $this->assertSame(['/tmp/uploads/foo.txt', '/tmp/uploads/bar.txt'], $file->getUploadedLocators());
+
+        $file->addValidation($this->rejectByName(['foo.txt', 'bar.txt']));
+
+        $this->assertFalse($file->uploadValid());
+        $this->assertSame([], $file->getUploadedLocators());
+    }
+
+    /**
+     * Each file is validated once. Running the validations again to find out which passed
+     * would let a validator with a side effect — a virus scanner, a remote lookup — see every
+     * file twice.
+     */
+    public function testUploadValidRunsEachValidationOncePerFile(): void
+    {
+        $validation = $this->createMock(ValidationInterface::class);
+        $validation->expects($this->exactly(2))->method('validate');
+
+        $file = new File('multiple', $this->storageNamingWhatItStored());
+        $file->addValidation($validation);
+
+        $this->assertTrue($file->uploadValid());
+    }
+
+    /**
+     * The guarantee uploadValid() opts out of: a set of files that is only meaningful
+     * complete stays all-or-nothing, and storage is not called at all.
+     */
+    public function testUploadIsStillAllOrNothing(): void
+    {
+        $storage = $this->mockStorage();
+        $storage->expects($this->never())->method('upload');
+
+        $file = new File('multiple', $storage);
+        $file->addValidation($this->rejectByName(['bar.txt']));
+
+        try {
+            $file->upload();
+            $this->fail('Expected the rejected file to fail the whole batch');
+        } catch (Exception $e) {
+            $this->assertSame('File validation failed', $e->getMessage());
+        }
+
+        $this->assertSame([], $file->getUploadedLocators());
+    }
+
+    /**
+     * With one file there is no partial outcome to keep — the field is stored whole or not at
+     * all — so all `uploadValid()` changes is how the rejection arrives: a `false` return
+     * where `upload()` throws. Nothing here may start throwing for a rejected file.
+     */
+    public function testUploadValidReportsASingleRejectedFileWithoutThrowing(): void
+    {
+        $storage = $this->mockStorage();
+        $storage->expects($this->never())->method('upload');
+
+        $file = new File('single', $storage);
+        $file->addValidation(new Mimetype(['image/png']));
+
+        $this->assertFalse($file->uploadValid());
+        $this->assertSame([], $file->getUploadedLocators());
+        $this->assertSame(
+            ['single.txt: Invalid mimetype. Must be one of: image/png'],
+            $file->getErrors()
+        );
+    }
+
+    /** The other half of the single-file case: indistinguishable from `upload()` */
+    public function testUploadValidStoresASingleValidFile(): void
+    {
+        $file = new File('single', $this->storageNamingWhatItStored());
+        $file->addValidation(new Mimetype(['text/plain']));
+
+        $this->assertTrue($file->uploadValid());
+        $this->assertSame(['/tmp/uploads/single.txt'], $file->getUploadedLocators());
+        $this->assertSame([], $file->getErrors());
+    }
+
+    /**
+     * The locators keep the offsets the files have in the collection, so `$file[1]` and its
+     * locator stay together. Appended to a list instead, a caller pairing the locators with a
+     * manifest built by iterating the collection would attribute this stored file to the
+     * metadata of the one that was rejected.
+     */
+    public function testUploadValidKeysTheLocatorsByCollectionOffset(): void
+    {
+        $file = new File('multiple', $this->storageNamingWhatItStored());
+        $file->addValidation($this->rejectByName(['foo.txt']));
+
+        $this->assertFalse($file->uploadValid());
+        $this->assertSame([1 => '/tmp/uploads/bar.txt'], $file->getUploadedLocators());
+    }
+
+    /**
+     * The exclusion that matters most, and the one with the least ordinary control flow: the
+     * uploaded-file check does not `continue`, so a file that fails it falls through the rest
+     * of the loop body like any other. It must still be left out of what is stored.
+     */
+    public function testUploadValidDoesNotStoreAFileThatFailsTheUploadedFileCheck(): void
+    {
+        $this->stubUploadedFileCheckByName(['bar.txt']);
+
+        $file = new File('multiple', $this->storageNamingWhatItStored());
+        $file->addValidation(new Mimetype(['text/plain']));
+
+        $this->assertFalse($file->uploadValid());
+        $this->assertSame(['/tmp/uploads/foo.txt'], $file->getUploadedLocators());
+        $this->assertSame(['bar.txt: Is not an uploaded file'], $file->getErrors());
+    }
+
+    /**
+     * A validator that fails for a reason of its own — a scanner that cannot be reached, an
+     * API that timed out — must fail the file closed rather than storing it unchecked.
+     */
+    public function testUploadValidDoesNotStoreAFileWhoseValidatorFailedUnexpectedly(): void
+    {
+        $validation = $this->createMock(ValidationInterface::class);
+        $validation->method('validate')->willReturnCallback(
+            static function (FileInfoInterface $fileInfo): void {
+                if ($fileInfo->getNameWithExtension() === 'bar.txt') {
+                    throw new \RuntimeException('clamd unreachable');
+                }
+            }
+        );
+
+        $file = new File('multiple', $this->storageNamingWhatItStored());
+        $file->addValidation($validation);
+
+        $this->assertFalse($file->uploadValid());
+        $this->assertSame(['/tmp/uploads/foo.txt'], $file->getUploadedLocators());
+        $this->assertSame(['bar.txt: Validation could not be completed'], $file->getErrors());
+    }
+
+    /**
+     * A LogicException is a bug in the program, so it reaches the developer rather than being
+     * recorded against a file — and it must do so before anything has been stored.
+     */
+    public function testUploadValidStoresNothingWhenAValidatorRaisesALogicException(): void
+    {
+        $storage = $this->mockStorage();
+        $storage->expects($this->never())->method('upload');
+
+        $validation = $this->createMock(ValidationInterface::class);
+        $validation
+            ->method('validate')
+            ->willThrowException(new InvalidArgumentException('Unsupported hashing algorithm'));
+
+        $file = new File('multiple', $storage);
+        $file->addValidation($validation);
+
+        try {
+            $file->uploadValid();
+            $this->fail('Expected the LogicException to reach the developer');
+        } catch (\LogicException $e) {
+            $this->assertSame('Unsupported hashing algorithm', $e->getMessage());
+        }
+
+        $this->assertSame([], $file->getUploadedLocators());
+    }
+
+    /**
+     * Validation runs to completion before anything is stored, so a callback that throws
+     * part-way through leaves nothing on disk.
+     *
+     * @dataProvider provideValidationCallbackNames
+     */
+    public function testUploadValidStoresNothingWhenAValidationCallbackThrows(string $callback): void
+    {
+        $storage = $this->mockStorage();
+        $storage->expects($this->never())->method('upload');
+
+        $file = new File('multiple', $storage);
+        $file->addValidation(new Mimetype(['text/plain']));
+        $file->$callback(static function (): void {
+            throw new \RuntimeException('per-file resource unavailable');
+        });
+
+        try {
+            $file->uploadValid();
+            $this->fail('Expected the callback failure to propagate');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('per-file resource unavailable', $e->getMessage());
+        }
+
+        $this->assertSame([], $file->getUploadedLocators());
+    }
+
+
+    /**
+     * A run owns the error list and the locator list. A callback that re-enters the object
+     * resets both underneath it, which can put a failed file into the set that is stored, so
+     * the nested call is refused rather than allowed to corrupt the run.
+     */
+    public function testACallbackCannotReEnterTheCollectionDuringValidation(): void
+    {
+        $storage = $this->mockStorage();
+        $storage->expects($this->never())->method('upload');
+
+        $file = new File('multiple', $storage);
+        $file->addValidation(new Mimetype(['text/plain']));
+        $file->beforeValidate(static function () use (&$file): void {
+            $file->isValid();
+        });
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('cannot be called while one of them is already running');
+
+        $file->uploadValid();
+    }
+
+    /**
+     * The lock spans the storing too: `afterUpload` fires once the validations are over, so a
+     * guard that covered only the validating would let a nested call reset the locator list
+     * half way through a batch.
+     */
+    public function testACallbackCannotReEnterTheCollectionDuringStorage(): void
+    {
+        $file = new File('multiple', $this->storageNamingWhatItStored());
+        $file->addValidation(new Mimetype(['text/plain']));
+        $file->afterUpload(static function () use (&$file): void {
+            $file->upload();
+        });
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('cannot be called while one of them is already running');
+
+        $file->upload();
+    }
+
+    /** The lock is released on the way out, including when the run threw */
+    public function testTheCollectionIsUsableAgainAfterARunThrows(): void
+    {
+        $file = new File('multiple', $this->storageNamingWhatItStored());
+        $file->addValidation(new Mimetype(['text/plain']));
+        $file->beforeValidate(static function (): void {
+            throw new \RuntimeException('per-file resource unavailable');
+        });
+
+        try {
+            $file->uploadValid();
+            $this->fail('Expected the callback failure to propagate');
+        } catch (\RuntimeException $e) {
+            $this->addToAssertionCount(1);
+        }
+
+        $file->beforeValidate(static function (): void {
+        });
+
+        $this->assertTrue($file->uploadValid());
+    }
+
+    /** @return array<string,string[]> */
+    public function provideValidationCallbackNames(): array
+    {
+        return [
+            'beforeValidate' => ['beforeValidate'],
+            'afterValidate' => ['afterValidate'],
+        ];
     }
 }

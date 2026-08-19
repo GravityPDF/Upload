@@ -101,8 +101,11 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     /** @var string[] Errors recorded during construction, which `isValid()` must not discard */
     protected $constructorErrors = [];
 
-    /** @var string[] Destination paths written by the most recent `upload()` call */
+    /** @var string[] Destination paths from the most recent `upload()`/`uploadValid()`, by offset */
     protected $uploadedFiles = [];
+
+    /** @var bool Is a validation or upload run already in progress on this object? */
+    private $running = false;
 
     /** @var callable|null */
     protected $beforeValidationCallback;
@@ -399,7 +402,12 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     }
 
     /**
-     * Upload file (delegated to storage object)
+     * Upload every file, or none of them (delegated to storage object)
+     *
+     * All-or-nothing: one file failing validation stores none of them. A caller who would
+     * rather keep what passed calls `uploadValid()` in place of this. Neither is atomic: a
+     * storage failure throws part-way through either, with `getUploadedLocators()` listing
+     * what was already committed.
      *
      * @return bool
      * @throws Exception If validation fails, or if there is nothing to upload
@@ -407,9 +415,79 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      */
     public function upload(): bool
     {
-        /* Before the guards, not after: a throw would otherwise leave the previous call's
-           paths in place, and the documented rollback loop would unlink files an earlier
-           successful upload legitimately stored. */
+        $this->guardNotReentrant();
+        $this->running = true;
+
+        try {
+            $valid = $this->prepareUpload();
+
+            if (!empty($this->errors)) {
+                throw new Exception('File validation failed');
+            }
+
+            $this->guardCollectionNotEmpty();
+
+            /* Nothing failed, so this is the whole collection */
+            $this->store($valid);
+        } finally {
+            $this->running = false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Upload the files that pass validation, leaving the rest in `getErrors()`
+     *
+     * `upload()` is all-or-nothing, and for a single-file field that is the whole story. For
+     * `name="photos[]"` it means one unreadable photo out of ten discards the other nine, and
+     * the submitter has to re-select every one of them. This stores each file that passed and
+     * reports the failures the way validation already behaves: they accumulate across the
+     * batch rather than aborting it.
+     *
+     * `upload()` keeps all-or-nothing, which is a legitimate thing to depend on for a set of
+     * files that is only meaningful complete. A caller uses one method or the other, so the
+     * choice is visible at the call rather than in a flag set somewhere else.
+     *
+     * Nothing throws for a rejected file, so the return value is the only signal that one
+     * was: a caller that abandons the request on `false` owns whatever is already on disk,
+     * and `getUploadedLocators()` is the list to undo.
+     *
+     * @return bool True when every file was stored, false when at least one was rejected — a
+     *              file that never transferred counts as rejected
+     * @throws Exception If there is nothing to upload, or if storage fails
+     * @throws LogicException If nothing has been configured to validate against
+     */
+    public function uploadValid(): bool
+    {
+        $this->guardNotReentrant();
+        $this->running = true;
+
+        try {
+            $valid = $this->prepareUpload();
+
+            $this->guardCollectionNotEmpty();
+            $this->store($valid);
+        } finally {
+            $this->running = false;
+        }
+
+        return empty($this->errors);
+    }
+
+    /**
+     * The steps both entry points take before either stores anything: forget the previous
+     * call's locators, refuse an object with nothing to validate against, and validate
+     *
+     * The locators go first, before the guards rather than after: a throw would otherwise
+     * leave the previous call's paths in place, and the documented rollback loop would unlink
+     * files an earlier successful upload legitimately stored.
+     *
+     * @return FileInfoInterface[] The files that passed, keyed by their collection offset
+     * @throws LogicException If nothing has been configured to validate against
+     */
+    private function prepareUpload(): array
+    {
         $this->uploadedFiles = [];
 
         /* LogicException, not Upload\Exception: the developer forgot to configure the object,
@@ -423,31 +501,82 @@ class File implements ArrayAccess, IteratorAggregate, Countable
             );
         }
 
-        if ($this->isValid() === false) {
-            throw new Exception('File validation failed');
-        }
-
-        /* Validations pass vacuously with nothing to run against, so without this the method
-           reports success having stored nothing. After isValid(), so a failed transfer still
-           reports through getErrors(). */
-        if (count($this->objects) === 0) {
-            throw new Exception('There are no files to upload');
-        }
-
-        foreach ($this->objects as $fileInfo) {
-            $this->applyCallback('beforeUploadCallback', $fileInfo);
-            $this->uploadedFiles[] = $this->storage->upload($fileInfo);
-            $this->applyCallback('afterUploadCallback', $fileInfo);
-        }
-
-        return true;
+        return $this->runValidations();
     }
 
     /**
-     * Destination paths written by the most recent `upload()` call
+     * Refuse a call that re-enters this object from one of its own lifecycle callbacks
+     *
+     * A run owns `$errors` and `$uploadedFiles`: it resets both at the start, and decides from
+     * `$errors` which files to hand to storage. A nested call resets them underneath the run
+     * in progress, so a file that failed can end up in the set that is stored and the locator
+     * list can lose what was already written. The lock spans the storing as well as the
+     * validating, since `afterUpload` fires after the validations have finished.
+     *
+     * A callback is given the `FileInfoInterface` it needs; calling back into the collection
+     * is the developer's mistake, not a failed file, so this is `LogicException` for the
+     * reason `prepareUpload()` gives.
+     *
+     * @throws LogicException If a run is already in progress on this object
+     */
+    private function guardNotReentrant(): void
+    {
+        if ($this->running === true) {
+            throw new LogicException(
+                'isValid(), upload() and uploadValid() cannot be called while one of them is '
+                . 'already running on this object. A lifecycle callback receives the file it '
+                . 'describes; it must not call back into the File.'
+            );
+        }
+    }
+
+    /**
+     * Refuse to report success for a collection with nothing in it
+     *
+     * Validations pass vacuously with nothing to run against, so without this both entry
+     * points report success having stored nothing. Each calls it after the validations, so a
+     * failed transfer is still reported through `getErrors()`.
+     *
+     * @throws Exception If the collection is empty
+     */
+    private function guardCollectionNotEmpty(): void
+    {
+        if (count($this->objects) === 0) {
+            throw new Exception('There are no files to upload');
+        }
+    }
+
+    /**
+     * Hand each file to the storage delegate, recording the locator it returns
+     *
+     * Keyed by the offset the file has in the collection, not appended: `uploadValid()`
+     * stores a subset, and a list would silently renumber it, so a caller pairing the
+     * locators with a manifest built by iterating the collection would attribute a stored
+     * file to the metadata of one that was rejected.
+     *
+     * @param FileInfoInterface[] $files Keyed by collection offset
+     * @throws Exception From the storage delegate, which aborts the rest of the batch
+     */
+    private function store(array $files): void
+    {
+        foreach ($files as $index => $fileInfo) {
+            $this->applyCallback('beforeUploadCallback', $fileInfo);
+            $this->uploadedFiles[$index] = $this->storage->upload($fileInfo);
+            $this->applyCallback('afterUploadCallback', $fileInfo);
+        }
+    }
+
+    /**
+     * Destination paths written by the most recent `upload()` or `uploadValid()` call
      *
      * A multi-file upload is not atomic, and `getErrors()` stays empty when a storage failure
-     * aborts it, so this is how a caller finds out what is already on disk.
+     * aborts it, so this is how a caller finds out what is already on disk. After
+     * `uploadValid()` it is the files that passed *and* were stored, which a storage failure
+     * part-way through leaves shorter than the set that passed.
+     *
+     * Keyed by collection offset, so the array is sparse after `uploadValid()`: the locator
+     * at `$i` belongs to `$file[$i]`, and a file that was not stored has no entry at all.
+     * Iterate it, or read it by offset — do not pair it positionally with the collection.
      *
      * @return string[]
      */
@@ -467,11 +596,46 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      */
     public function isValid(): bool
     {
-        /* Reset rather than append: upload() calls isValid() again, so the
+        $this->guardNotReentrant();
+        $this->running = true;
+
+        try {
+            $this->runValidations();
+        } finally {
+            $this->running = false;
+        }
+
+        return empty($this->errors);
+    }
+
+    /**
+     * Run the uploaded-file check and every validation against every file, recording each
+     * failure in `$this->errors`
+     *
+     * Returns the files rather than a boolean because `uploadValid()` needs to know *which*
+     * files passed, and running the validations twice to find out would let a validator with
+     * a side effect — a virus scanner, an API call — see each file twice.
+     *
+     * @return FileInfoInterface[] The files that passed, keyed by their collection offset
+     * @throws LogicException Unabsorbed from a validator: broken code, not a failed file
+     * @throws \Throwable From a user callback
+     */
+    private function runValidations(): array
+    {
+        /* Reset rather than append: upload() validates again, so the
            `if (!$file->isValid()) {…} $file->upload();` pattern would double every error */
         $this->errors = $this->constructorErrors;
 
-        foreach ($this->objects as $fileInfo) {
+        $valid = [];
+
+        foreach ($this->objects as $index => $fileInfo) {
+            /* A file passed iff this iteration recorded nothing for it. Derived rather than
+               tracked, so an error site added here cannot forget to mark the file failed and
+               hand a rejected upload to storage. Taken before the first hook rather than
+               after, so that guarantee covers the whole iteration and not just the part below
+               it: `$errors` is `protected`, so a subclass can record from either hook. */
+            $errorCount = count($this->errors);
+
             $this->applyCallback('beforeValidationCallback', $fileInfo);
 
             /* Not a `continue`: the validation callbacks are documented as a matched pair
@@ -509,9 +673,13 @@ class File implements ArrayAccess, IteratorAggregate, Countable
             }
 
             $this->applyCallback('afterValidationCallback', $fileInfo);
+
+            if (count($this->errors) === $errorCount) {
+                $valid[$index] = $fileInfo;
+            }
         }
 
-        return empty($this->errors);
+        return $valid;
     }
 
     protected function applyCallback(string $callbackName, FileInfoInterface $file): void
