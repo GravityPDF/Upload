@@ -19,9 +19,9 @@ without it, sanitized filenames aren't guaranteed to be valid UTF-8. See
 
 ## 2. `upload()` needs at least one validation
 
-With no validations configured, `upload()` throws `\LogicException` — a different type from
-the `\GravityPdf\Upload\Exception` a rejected file throws, so a misconfigured object can't
-end up in the branch where you handle a bad upload.
+With no validations configured, `upload()` throws `\LogicException`. That's a different
+type from the `\GravityPdf\Upload\Exception` a rejected file throws, so a misconfigured
+object can't end up in the branch where you handle a bad upload.
 
 **If you catch `\GravityPdf\Upload\Exception` around `upload()`, add `\LogicException`.**
 A `catch (\Exception $e)` needs no change.
@@ -38,10 +38,9 @@ $file->allowUnvalidatedUploads();
 ## 3. Executable and markup extensions are refused
 
 `Storage\FileSystem` won't write a file whose extension is in
-`FileSystem::getDefaultBlockedExtensions()` — things a server executes or reads as config
+`FileSystem::getDefaultBlockedExtensions()`: things a server executes or reads as config
 (`php`, `cgi`, `exe`, `htaccess`, `config`) and markup a browser renders (`html`, `svg`,
-`js`, `xml`). Full table in the
-[README](README.md#extensions-blocked-by-default).
+`js`, `xml`). Full table in the [README](README.md#extensions-blocked-by-default).
 
 The refusal throws `\GravityPdf\Upload\Exception` from `upload()`. It isn't a validation
 error, so it doesn't appear in `getErrors()`.
@@ -57,13 +56,16 @@ To keep a blocked extension:
 ```php
 use GravityPdf\Upload\Storage\FileSystem;
 
-// Drop one entry
+// Drop the entries you need, keeping the rest of the list
 $storage->blockExtensions(
     array_diff(FileSystem::getDefaultBlockedExtensions(), ['config'])
 );
 
-// Accept markup such as SVG and HTML, and sanitize the contents yourself
-$storage->blockExtensions(FileSystem::EXECUTABLE_EXTENSIONS);
+// Accepting SVG means dropping two entries, not the whole markup group.
+// Sanitize the contents yourself
+$storage->blockExtensions(
+    array_diff(FileSystem::getDefaultBlockedExtensions(), ['svg', 'svgz'])
+);
 
 // Or restore the 3.x behaviour of writing any extension
 $storage->allowAnyExtension();
@@ -75,7 +77,7 @@ Two things to check if you pass your own list:
   `tar` and `gz` separately. Your list may block more than you meant.
 * **`blockExtensions()` requires a non-empty array** and throws on `[]`, so a missing
   config value can't quietly disable the check. `allowAnyExtension()` is the only way to
-  empty the list. Both are new in 4.0, as are `getBlockedExtensions()` and `getMode()`.
+  empty the list.
 
 ## 4. Stored files get mode `0640`
 
@@ -91,8 +93,8 @@ $storage->setMode(0644);  // or null to leave it to the umask, as 3.x did
 `File::humanReadableToBytes()`, used by `Validation\Size`, now understands a trailing `B`.
 3.x read only the last character, so `'5MB'` was 5 bytes.
 
-**Check every size bound using a `KB`/`MB`/`GB` suffix** — each becomes much larger. Bounds
-without the trailing `B` are unchanged.
+**Check every size bound using a `KB`/`MB`/`GB` suffix**, since each becomes much larger.
+Bounds without the trailing `B` are unchanged.
 
 **Check any bound using a unit other than `B`, `K`, `M` or `G` as well.** 3.x read the unit
 as bytes, so `new Size('1T')` was a one-byte limit that rejected everything while reading
@@ -142,15 +144,14 @@ if ($file->uploadValid() === false) {
 ```
 
 Nothing throws for a rejected file, so that return value is the only signal one was. A
-single-file field gains nothing from the swap — it is stored whole or not at all, and there
-`uploadValid()` only turns the rejection into a `false` return.
+single-file field gains nothing from the swap, since it's stored whole or not at all.
 
 ## 8. Invalid extensions are discarded, not repaired
 
 `setExtension()` lowercases and trims, then discards the extension if anything other than
 letters and digits remains. 3.x deleted the offending characters, which could build an
 extension the client never sent. Files that used to land with a repaired extension now land
-with none; a `FileType` validation will reject them up front if you need one.
+with none; add a `FileType` validation to reject them up front.
 
 ## 9. Swap `Extension` and `Mimetype` for `FileType` (recommended)
 
@@ -181,7 +182,7 @@ One format per `allow()` call, or every extension is paired with every media typ
 
 **`setName()`, `setExtension()` and `setNameWithExtension()` no longer declare a return
 type.** They declared `: FileInfo`, so an implementation that didn't extend `FileInfo`
-couldn't satisfy them — omitting the type was a fatal, and matching it compiled and then
+couldn't satisfy them: omitting the type was a fatal, and matching it compiled and then
 raised a `TypeError` on the first call. **Delete `: FileInfo` from your own setters and
 return `$this`.** Leaving it keeps the same `TypeError`, since the declaration is your
 class's. `FileInfo` keeps it on its own methods, so existing subclasses need no change.
@@ -194,22 +195,22 @@ necessarily yours. Never return `''`; throw instead.
 **Throw `\GravityPdf\Upload\Exception` from custom validators.** A `\LogicException`
 propagates out of `isValid()` untouched, since it signals broken code rather than a rejected
 file. Anything else is still caught, but neither its message (which can contain server
-paths) nor its class name reaches `getErrors()` — catch it in the validator and rethrow an
-`Upload\Exception` if either belongs in what the user sees. Relatedly,
-`FileInfo::getHash()` throws `\InvalidArgumentException` for an unsupported algorithm, so a
-misspelled algorithm reports as broken code rather than as a rejected file.
+paths) nor its class name reaches `getErrors()`. Catch it in the validator and rethrow an
+`Upload\Exception` if either belongs in what the user sees. `FileInfo::getHash()` throws
+`\InvalidArgumentException` for an unsupported algorithm for the same reason: a misspelled
+algorithm is broken code, not a rejected file.
 
 **`Storage\FileSystem` no longer trusts the name a `FileInfoInterface` returns.** It reduces
 the name to its `basename()` and rewrites the characters Windows disallows (`<` `>` `:` `"`
 `|` `?` `*`) to `-`. It refuses a name that starts with a dot, contains control or bidi
 characters, resolves to a Windows device such as `CON.txt`, or points at a symlinked
-destination. A name can no longer select a subdirectory — construct the `FileSystem` with
+destination. A name can no longer select a subdirectory; construct the `FileSystem` with
 it instead. The shipped `FileInfo` already rewrites or blanks all of these.
 
 **Other changes:**
 
 * `blockExtensions()` takes a required, non-empty array. No argument no longer means the
-  default list — pass `FileSystem::getDefaultBlockedExtensions()`.
+  default list: pass `FileSystem::getDefaultBlockedExtensions()`.
 * `File::__call()` throws `\BadMethodCallException` and `FileInfo::createFromFactory()`
   throws `\LogicException`, both previously `\GravityPdf\Upload\Exception`.
 * `Exception::__construct()` declares `string $message` and accepts `$code` and `$previous`.
@@ -227,18 +228,18 @@ it instead. The shipped `FileInfo` already rewrites or blanks all of these.
 Each of these is listed in full in the [changelog](CHANGELOG.md).
 
 * **`upload()` no longer runs an `isValid()` override.** Both entry points validate through
-  a private method that reports *which* files passed, so `uploadValid()` doesn't have to
-  validate a second time and let a validator with a side effect see every file twice.
-  Validation still runs on every `upload()` call, and `isValid()` is unchanged when you call
-  it yourself — but a `File` subclass that overrode `isValid()` to add a check of its own (a
-  quota, a per-tenant policy, an extra scan) no longer has that check run by `upload()`.
-  **Move it into a `ValidationInterface`**, which both entry points honour.
+  a private method that reports which files passed, so `uploadValid()` doesn't validate a
+  second time and let a validator with a side effect see every file twice. Validation still
+  runs on every `upload()` call, and `isValid()` is unchanged when you call it yourself. But
+  a `File` subclass that overrode `isValid()` to add a check of its own (a quota, a
+  per-tenant policy, an extra scan) no longer has that check run by `upload()`. **Move it
+  into a `ValidationInterface`**, which both entry points honour.
 * **The storage collision message changed.** `'File already exists'` is now
-  `'A file named "report.txt" already exists'` — sanitizing is many-to-one, so the old
-  wording couldn't say which name collided. **Update anything matching the old string.**
-  Log storage messages rather than showing them to whoever submitted the file; the wording
-  distinguishes a name that exists from a destination that couldn't be created.
-  `getErrors()` is the list written to be rendered.
+  `'A file named "report.txt" already exists'`, since sanitizing is many-to-one and the old
+  wording couldn't say which name collided. **Update anything matching the old string.** Log
+  storage messages rather than showing them to whoever submitted the file: the wording
+  distinguishes a name that exists from a destination that couldn't be created, which is an
+  existence check on your upload directory. `getErrors()` is the list written to be rendered.
 * Uploads are written to a temporary name in the destination directory and moved into
   place, so no partial content is readable under the final name. Watch for transient
   `upload-<random>.part` entries if you monitor the directory. With `overwrite` off (the
@@ -269,6 +270,6 @@ Each of these is listed in full in the [changelog](CHANGELOG.md).
   other than the SAPI populates `$_FILES`.
 * Nothing to change, but new: `FileList` takes `FileInfoInterface` objects directly, so
   feeding the library from PSR-7, a worker runtime or a test no longer means faking
-  `$_FILES`. Two things are yours to answer there, neither a default — override
+  `$_FILES`. Two things are yours to answer there, neither a default: override
   `FileInfo::isUploadedFile()`, and call `FileSystem::acceptFilesNotUploadedByPhp()`. See
   [Uploads from another source](README.md#uploads-from-another-source).
