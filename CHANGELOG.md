@@ -55,6 +55,7 @@ A security release. New protections are on by default and will refuse some uploa
 * `FileInfo::getSize()` returns `false` for an unreadable file, matching the `int|false` that `FileInfoInterface` documents. On PHP 8 `SplFileInfo::getSize()` throws instead
 * Sanitized filenames are valid UTF-8 where `ext-mbstring` is loaded (now listed under `suggest`; `symfony/polyfill-mbstring` also works). Without it, truncation can still split a multibyte character, as in 3.x
 * `Exception::__construct()` declares `string $message`, where it was untyped in an otherwise strict codebase
+* **The published package is `src/`, `composer.json` and the documentation — no `tests/`, no `tools/`, no CI or analyser config.** A `.gitattributes` marks the dev tooling `export-ignore`, so it is absent from the archive `composer install` unpacks into `vendor/`; `--prefer-install=source` still clones the repository, which is what a contributor wants. **Anything reaching into `vendor/gravitypdf/upload/tests/` no longer finds it** — those fixtures exist for this library's own suite and were never API. The `FileInfo` subclass a `FileList` caller needs is written out in the README
 
 ## New Features
 

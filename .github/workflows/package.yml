@@ -1,0 +1,40 @@
+name: Package Contents
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# The workflows only read the repository; nothing needs a write-capable GITHUB_TOKEN.
+permissions:
+  contents: read
+
+# Cancels all previous workflow runs for pull requests that have not completed.
+concurrency:
+  # The concurrency group contains the workflow name and the branch name for pull requests
+  # or the commit hash for any other events.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  run:
+    name: Dist archive
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.0
+
+      # `git archive` is what GitHub runs to build the tarball for a tag, and what
+      # `composer install` unpacks into vendor/. Read the committed .gitattributes
+      # rather than the working tree's, since that is the copy the tag carries.
+      #
+      # Top level only: this has to fail when a new dev directory ships, and when a
+      # file a consumer needs stops shipping, without every new src/Upload/*.php
+      # being a manifest edit.
+      - name: Check what the package ships
+        run: |
+          git archive HEAD | tar -t | sed 's:/.*::' | sort -u > actual.txt
+          printf '%s\n' CHANGELOG.md LICENSE README.md UPGRADE.md composer.json src \
+            | sort > expected.txt
+          diff -u expected.txt actual.txt
