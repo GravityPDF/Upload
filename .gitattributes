@@ -1,0 +1,9 @@
+# Keep the distributed package to what a consumer actually runs.
+/.github        export-ignore
+/tests          export-ignore
+/tools          export-ignore
+/.gitattributes export-ignore
+/.gitignore     export-ignore
+/phpunit.xml    export-ignore
+/phpstan.neon   export-ignore
+/CLAUDE.md      export-ignore
