@@ -43,6 +43,9 @@ namespace GravityPdf\Upload;
  * so they cannot disagree about what the rules are, as they did before 4.0.0 when each layer
  * carried its own control-character filter and each had to be fixed separately.
  *
+ * `sanitizeForDisplay()` is a third use, for strings that are prose rather than names. It shares the
+ * two character sets and nothing else.
+ *
  * @package Upload
  * @since   4.0.0
  */
@@ -139,6 +142,27 @@ final class Filename
     }
 
     /**
+     * Make a string safe to render as one line of prose
+     *
+     * **Not escaping.** `<`, `>`, `&` and `"` pass through, so the result still needs
+     * `htmlspecialchars()` where it lands. What goes is what misrepresents the text around it
+     * wherever it is read, escaped or not: a log line, a terminal, an email.
+     *
+     * The other flavour of sanitizing. `sanitizeName()` and friends answer to what a *filename*
+     * may be — a byte budget, device names, `%` and `/` rewritten — which would turn
+     * `Must be one of: image/png` into `Must be one of- image-png`. So controls collapse to a
+     * space rather than `-`, nothing bounds the length, and UTF-8 is forced for the reason
+     * `finalize()` forces it, needing `ext-mbstring` the same way.
+     */
+    public static function sanitizeForDisplay(string $value): string
+    {
+        $value = (string) preg_replace('/' . self::BIDI_CONTROLS . '/', '', $value);
+        $value = (string) preg_replace('/(?:' . self::CONTROL_CHARACTERS . ')+/', ' ', $value);
+
+        return trim(self::forceValidUtf8($value));
+    }
+
+    /**
      * The character rewriting half, with no truncation and no device-name handling. May return ''
      *
      * Separate because `FileInfo::setExtension()` has to redo the *fitting* against a new
@@ -194,12 +218,9 @@ final class Filename
         /* `function_exists()`, not `extension_loaded('mbstring')`: `symfony/polyfill-mbstring`
            defines these in userland and registers no extension, so `extension_loaded()` is
            false for it and every polyfilled install would silently take the `substr()` branch
-           and skip the UTF-8 repair. All five are checked because all five are used below. */
-        $multibyte = function_exists('mb_strcut')
-            && function_exists('mb_detect_encoding')
-            && function_exists('mb_check_encoding')
-            && function_exists('mb_convert_encoding')
-            && function_exists('mb_substitute_character');
+           and skip the UTF-8 repair. Only the two this truncation calls; `forceValidUtf8()`
+           checks the three it needs for itself. */
+        $multibyte = function_exists('mb_strcut') && function_exists('mb_detect_encoding');
 
         /* Only when there is something to cut: the detect-and-cut pair is not free. */
         if (strlen($name) > $maxLength && $multibyte) {
@@ -215,11 +236,10 @@ final class Filename
 
         /* For a name that arrived invalid, not for one this class broke: `rewrite()` is
            single-byte ASCII except `\xC2[\x80-\x9F]`, which matches both bytes as a unit, and
-           `mb_strcut()` cuts on a character boundary. `substr()` above can split a sequence,
-           but it runs only when mbstring is missing, which is when this is skipped too. */
-        if ($multibyte) {
-            $name = self::forceValidUtf8($name);
-        }
+           `mb_strcut()` cuts on a character boundary. Unconditional, because `substr()` above
+           can split a sequence and repairing that is worth doing on a build where `mb_strcut()`
+           is missing but the three functions this needs are not. */
+        $name = self::forceValidUtf8($name);
 
         /* After forceValidUtf8(), not before it: dropping an invalid byte can produce a name
            that was not reserved when the bytes arrived, and `con\xC3.txt` is not `con` until
@@ -353,9 +373,22 @@ final class Filename
      *
      * A client can send a filename that is not valid UTF-8 to begin with, and one that reaches
      * storage makes `json_encode()` return `false` and breaks inserts into `utf8mb4` columns.
+     *
+     * The guard is here rather than in each caller because `ext-mbstring` is `suggest` and every
+     * call below is fatal without it. It sat in `finalize()` alone until a second caller reused
+     * the function and not the precondition, and a rejected upload became a fatal error. Returns
+     * the input unchanged instead, losing only the UTF-8 guarantee, as `README.md` says.
      */
     private static function forceValidUtf8(string $name): string
     {
+        if (
+            !function_exists('mb_check_encoding')
+            || !function_exists('mb_convert_encoding')
+            || !function_exists('mb_substitute_character')
+        ) {
+            return $name;
+        }
+
         if (mb_check_encoding($name, 'UTF-8')) {
             return $name;
         }
@@ -363,7 +396,10 @@ final class Filename
         /* 'none' drops the offending bytes instead of replacing them with a substitute char */
         $substitute = mb_substitute_character();
         mb_substitute_character('none');
-        $name = (string)mb_convert_encoding($name, 'UTF-8', 'UTF-8');
+        /* Silenced for `symfony/polyfill-mbstring`, which implements this over `iconv()` and
+           warns on exactly the input this repairs. Same result as the extension, only noisier,
+           and a client-supplied name must not raise a warning. */
+        $name = (string)@mb_convert_encoding($name, 'UTF-8', 'UTF-8');
         mb_substitute_character($substitute);
 
         return $name;

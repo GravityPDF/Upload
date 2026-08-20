@@ -142,7 +142,12 @@ class File implements ArrayAccess, IteratorAggregate, Countable
         }
 
         if (isset($_FILES[$key]) === false) {
-            throw new InvalidArgumentException("Cannot find uploaded file(s) identified by key: $key");
+            /* Sanitized like `FileList::describeKey()`: the two constructors of one collection
+               must not disagree about how a key is reported. */
+            throw new InvalidArgumentException(sprintf(
+                'Cannot find uploaded file(s) identified by key: %s',
+                Filename::sanitizeForDisplay($key)
+            ));
         }
 
         /* The SAPI always builds the entry as an array with these three keys; a PSR-7 bridge,
@@ -701,7 +706,10 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                         $validation->validate($fileInfo);
                     } catch (Exception $e) {
                         $sanitizedFilename = $sanitizedFilename ?? $this->getSanitizedFilename($fileInfo);
-                        $this->errors[] = sprintf('%s: %s', $sanitizedFilename, $e->getMessage());
+                        /* Text this library did not write. No shipped validator reaches here
+                           with anything but configuration; a validator of your own may. */
+                        $message = Filename::sanitizeForDisplay($e->getMessage());
+                        $this->errors[] = sprintf('%s: %s', $sanitizedFilename, $message);
                     } catch (LogicException $e) {
                         /* By PHP's own definition a bug in the program, not a failed file.
                            Absorbed, `getHash('sha255')` in a validator would be reported as a

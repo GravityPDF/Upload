@@ -106,6 +106,54 @@ class FileInfoTest extends TestCase
     }
 
     /**
+     * @dataProvider providerSetNameSanitizingRequiringMbstring
+     * @group mbstring
+     */
+    public function testSetNameSanitizingWithInvalidUtf8(
+        string $expectedName,
+        string $expectedExtension,
+        string $filename
+    ): void {
+        $file = new FileInfo(__DIR__ . '/assets/foo.txt', $filename);
+        $this->assertSame($expectedName, $file->getName());
+        $this->assertSame($expectedExtension, $file->getExtension());
+    }
+
+    /**
+     * @dataProvider providerSetNameSanitizingRequiringMbstring
+     * @group mbstring
+     */
+    public function testSetNameWithExtensionWithInvalidUtf8(
+        string $expectedName,
+        string $expectedExtension,
+        string $filename
+    ): void {
+        $this->fileWithExtension->setNameWithExtension($filename);
+        $this->assertSame($expectedName, $this->fileWithExtension->getName());
+        $this->assertSame($expectedExtension, $this->fileWithExtension->getExtension());
+    }
+
+    /**
+     * The reserved-name test runs after the invalid bytes are dropped, so one junk byte no
+     * longer smuggles a device name through.
+     *
+     * Split out and grouped because dropping the byte needs `ext-mbstring` or the polyfill.
+     * Without either the name keeps its byte, is not `con`, and is stored rather than blanked.
+     * Excluded rather than skipped: `cross-file-system` runs the suite with `--fail-on-skipped`
+     * and relies on there being exactly one skip.
+     *
+     * @return array<int, array<int,string>>
+     */
+    public function providerSetNameSanitizingRequiringMbstring(): array
+    {
+        return [
+            ['unnamed-file', 'txt', "con\xC3.txt"],
+            ['unnamed-file', '', "nul\x80"],
+            ['unnamed-file', '', "com1\x80_"],
+        ];
+    }
+
+    /**
      * @return array<int, array<int,string>>
      */
     public function providerSetNameSanitizing(): array
@@ -215,12 +263,6 @@ class FileInfoTest extends TestCase
 
             /* The list ends at one digit, so this is an ordinary name */
             69 => ['com10', 'txt', 'com10.txt'],
-
-            /* The reserved-name test runs after the invalid bytes are dropped, so one junk byte
-               no longer smuggles a device name through */
-            70 => ['unnamed-file', 'txt', "con\xC3.txt"],
-            71 => ['unnamed-file', '', "nul\x80"],
-            72 => ['unnamed-file', '', "com1\x80_"],
 
             /* C1 controls, as UTF-8. U+0085 ends a line for anything matching on `\R` and
                U+009B is what a terminal reads as the CSI introducer. */
@@ -339,6 +381,9 @@ class FileInfoTest extends TestCase
         $this->assertSame('evil-p-h.p', $file->getNameWithExtension());
     }
 
+    /**
+     * @group mbstring
+     */
     public function testSanitizedNameIsAlwaysValidUtf8(): void
     {
         /* "\xC3" opens a 2-byte sequence completed by "(", which is stripped as URI reserved */

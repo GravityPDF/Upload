@@ -83,6 +83,129 @@ jobs:
           files: tmp/coverage/report-xml/php-coverage1.xml
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  # `ext-mbstring` is `suggest`, not `require`, and every job above runs with it loaded, so an
+  # unguarded `mb_*` call fatals on a supported install without any of them noticing.
+  #
+  # Two jobs, because two constraints collide. PHPUnit declares `ext-mbstring` and will not
+  # start without it. And `disable_functions`, which stands in for it since `function_exists()`
+  # is the library's only detection, cannot host the polyfill before PHP 8: a disabled function
+  # keeps its name reserved there, so redeclaring it fatals even though `function_exists()`
+  # reports false.
+  mbstring:
+    name: ${{ matrix.label }} on PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    env:
+      # `Filename`'s whole mbstring surface, so removing these is what "no mbstring" means here
+      MB_DISABLED: mb_strcut,mb_detect_encoding,mb_check_encoding,mb_convert_encoding,mb_substitute_character
+    strategy:
+      fail-fast: false
+      matrix:
+        # `include` alone, so each entry is one job rather than a dimension to multiply out
+        include:
+          # Only the valid-UTF-8 guarantee is given up here, which is what `@group mbstring`
+          # marks. Excluded rather than skipped: the suite keeps exactly one
+          # `markTestSkipped()` so `cross-file-system` can prove it ran with --fail-on-skipped.
+          - { php: '7.3', label: No mbstring, polyfill: false, phpunit: --exclude-group mbstring }
+          - { php: '8.5', label: No mbstring, polyfill: false, phpunit: --exclude-group mbstring }
+          # No --exclude-group: the README's claim is that the polyfill is equivalent, so the
+          # suite has to pass exactly as it does with the extension. 8.5 only, per the
+          # redeclare note above; `Extension absent` carries the claim on 7.3.
+          - { php: '8.5', label: mbstring polyfill, polyfill: true, phpunit: '' }
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.0
+
+      - name: Install PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.35.5
+        with:
+          php-version: ${{ matrix.php }}
+
+      - name: Install Composer dependencies
+        run: composer install --no-scripts
+
+      - name: Install the mbstring polyfill
+        if: ${{ matrix.polyfill }}
+        run: composer require --no-scripts symfony/polyfill-mbstring
+
+      # Fail here rather than three steps later with a green suite that proved nothing
+      - name: Assert the library cannot see mbstring
+        run: |
+          php -d disable_functions=$MB_DISABLED -r 'foreach (["mb_strcut", "mb_detect_encoding", "mb_check_encoding", "mb_convert_encoding", "mb_substitute_character"] as $f) { if (function_exists($f)) { fwrite(STDERR, "$f is still callable\n"); exit(1); } }'
+
+      # The polyfill defines what `disable_functions` took away, and does not ship
+      # `mb_strcut()`. Asserting both is what proves this is the polyfill answering.
+      - name: Assert the polyfill is what is answering
+        if: ${{ matrix.polyfill }}
+        run: |
+          php -d disable_functions=$MB_DISABLED -r 'require "vendor/autoload.php";
+                  if (!function_exists("mb_check_encoding")) { fwrite(STDERR, "polyfill absent\n"); exit(1); }
+                  if (function_exists("mb_strcut")) { fwrite(STDERR, "mb_strcut came back; the gate this job exists for is gone\n"); exit(1); }'
+
+      - name: Run the test suite
+        run: php -d disable_functions=$MB_DISABLED vendor/bin/phpunit ${{ matrix.phpunit }}
+
+  # The extension genuinely absent, which PHPUnit cannot be present for. No test framework, just
+  # the library doing what fatalled. This is the job that would have caught it.
+  without-mbstring-extension:
+    name: Extension absent${{ matrix.polyfill && ' with polyfill' || '' }} on PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: [ '7.3', '8.5' ]
+        polyfill: [ false, true ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.0
+
+      - name: Install PHP without mbstring
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.35.5
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: :mbstring
+
+      - name: Assert mbstring really is gone
+        run: php -r 'if (extension_loaded("mbstring")) { fwrite(STDERR, "mbstring is still loaded\n"); exit(1); }'
+
+      # PHPUnit declares ext-mbstring, so it installs only under the override and cannot run.
+      # The library needs nothing but ext-fileinfo, which is the point.
+      - name: Install Composer dependencies
+        run: composer install --no-scripts --ignore-platform-req=ext-mbstring
+
+      - name: Install the mbstring polyfill
+        if: ${{ matrix.polyfill }}
+        run: composer require --no-scripts --ignore-platform-req=ext-mbstring symfony/polyfill-mbstring
+
+      # Only the UTF-8 repair separates the two configurations, so it is asserted both ways.
+      # As hex: the un-repaired value is not valid UTF-8, so json_encode() returns false for it,
+      # which is the bug it causes.
+      - name: Sanitize with the extension absent
+        env:
+          EXPECT_REPAIR: ${{ matrix.polyfill }}
+        run: |
+          php -r 'require "vendor/autoload.php";
+                  $sanitize = ["GravityPdf\Upload\Filename", "sanitizeForDisplay"];
+                  $checks = [
+                      "a message" => ["a b", $sanitize("a\nb")],
+                      "a filename" => ["re-port.txt", GravityPdf\Upload\Filename::sanitizeNameWithExtension("re\nport.txt")],
+                  ];
+                  foreach ($checks as $what => list($expected, $actual)) {
+                      if ($expected !== $actual) {
+                          fwrite(STDERR, sprintf("%s: expected %s, got %s\n", $what, $expected, $actual));
+                          exit(1);
+                      }
+                  }
+                  $repaired = getenv("EXPECT_REPAIR") === "true";
+                  $expected = $repaired ? "6261642862797465" : "626164c32862797465";
+                  $actual = bin2hex($sanitize("bad\xC3\x28byte"));
+                  if ($expected !== $actual) {
+                      fwrite(STDERR, sprintf("UTF-8 repair (polyfill=%s): expected %s, got %s\n", var_export($repaired, true), $expected, $actual));
+                      exit(1);
+                  }
+                  echo "sanitized without the mbstring extension\n";'
+
   # `moveFile()`'s job is to carry a file across a file-system boundary, which is the
   # container layout `FileSystem::acceptFilesNotUploadedByPhp()` exists for. The matrix job
   # above runs that test only if it finds a second file system for itself — `/dev/shm` is one
