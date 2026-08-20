@@ -189,15 +189,15 @@ files that failed to transfer are missing from the collection.
 
 #### Storing only the files that passed
 
-The standard `upload()` flow is all-or-nothing: if any file fails validation, nothing is
-stored. To enable partial uploads on multi-file upload fields call `uploadValid()` instead of `upload()`. It stores each file that passed
-and returns `false` when at least one was rejected.
+`upload()` is all-or-nothing: if any file fails validation, nothing is stored. Call
+`uploadValid()` in its place to store each file that passed. It returns `false` when at least
+one was rejected.
 
 ```php
-// The isValid() bail-out is removed when using $file->uploadValid().
-// Rejected files are reported after the storing
+// No isValid() bail-out here: uploadValid() validates, stores what passed, and
+// reports the rest afterwards
 if (count($file) === 0) {
-    // A transfer that failed outright — too large, nothing selected — leaves the
+    // A transfer that failed outright (too large, nothing selected) leaves the
     // collection empty, and its message is already in getErrors()
     foreach ($file->getErrors() as $message) {
         echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'), '<br>';
@@ -208,13 +208,13 @@ if (count($file) === 0) {
 
 try {
     if ($file->uploadValid() === false) {
-        // if false at least one file was rejected (the rest are stored). Display the errors.
+        // At least one file was rejected; the rest are stored
         foreach ($file->getErrors() as $message) {
             echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'), '<br>';
         }
     }
 } catch (\Exception $e) {
-    // The catch now handles storage failures only, which still abort the batch
+    // Storage failures only, which still abort the batch
     return;
 }
 
@@ -224,15 +224,14 @@ foreach ($file->getUploadedLocators() as $offset => $storedPath) {
 }
 ```
 
-A file that never transferred is counted as rejected, since its message is in `getErrors()`.
+A file that never transferred counts as rejected, since its message is in `getErrors()`.
 Storage failures (destination exists, blocked extension, disk full) still throw part-way
-through the batch, which is what the `catch` is left for: `getUploadedLocators()` lists what
-was written before the throw, so a partial batch can be kept or rolled back.
+through the batch, which is what the `catch` is for: `getUploadedLocators()` lists what was
+written before the throw.
 
 Nothing throws for a rejected file, so the `false` return is the only signal that one was.
-**If you abandon the request on `false`, the files that passed are already on disk** — undo
-them yourself, the way the `catch` above does, or they are left with nothing referencing
-them.
+**The files that passed are already on disk**, so undo them yourself if you abandon the
+request there, the way the `catch` above does.
 
 ### Uploads from another source
 
@@ -285,7 +284,7 @@ On the `$_FILES` path PHP guarantees the file arrived in this request's `multipa
 body. It checks it twice: `is_uploaded_file()` on the way in, `move_uploaded_file()` on the way
 out. That is what stops a manipulated path storing `/etc/passwd` or another user's upload as a
 file of your own. Off that path PHP cannot make the guarantee, so both ends refuse the file
-until you replace them. Until then every upload fails with `Is not an uploaded file`.
+until you replace them, and every upload fails with `Is not an uploaded file`.
 
 **1. Say where the file came from.** Override `isUploadedFile()`, usually to check the path is
 inside a directory only your bridge writes to:
@@ -399,11 +398,10 @@ $list = fileListFrom(iterator_to_array($flat, false), $storage, 10 * 1024 * 1024
 ```
 
 Neither argument is optional. Without `CHILD_ARRAYS_ONLY` the iterator descends into the
-`UploadedFileInterface` objects themselves and yields their properties, which for the usual
-implementation means nothing at all, because those properties are private. Without the `false`,
-keys are leaf names only, so `docs[front]` and `scans[front]` collide and one of the two files
-disappears. Build composite keys such as `docs.front` yourself if you want the field names back
-from `getSourceKeys()`.
+`UploadedFileInterface` objects and yields their properties, which for the usual implementation
+is nothing at all, since those properties are private. Without the `false`, keys are leaf names
+only, so `docs[front]` and `scans[front]` collide and one file disappears. Build composite keys
+such as `docs.front` yourself if you want field names back from `getSourceKeys()`.
 
 Storing a file moves it, so the tmp files behind stored uploads are gone afterwards. The ones
 behind rejected uploads are not, and nothing else will remove them:
@@ -425,7 +423,7 @@ work like renaming or audit logging without writing your own loops.
 
 The two validation hooks are a matched pair: `afterValidate` fires for every file
 `beforeValidate` fired for, including one that failed, so they can safely open and close a
-per-file resource. The upload hooks are not a pair — a storage failure throws out of
+per-file resource. The upload hooks are not a pair: a storage failure throws out of
 `upload()` before `afterUpload` runs. Under `uploadValid()` the upload hooks fire only for
 the files being stored; the validation hooks still fire for every file.
 
@@ -442,7 +440,7 @@ $file->afterUpload(static function (FileInfoInterface $fileInfo): void {
 ```
 
 **`beforeUpload` runs after validation, not before it**, so a name set there is never
-validated — only the storage deny-list and `FileSystem`'s filename rules apply. `setName()`
+validated: only the storage deny-list and `FileSystem`'s filename rules apply. `setName()`
 is safe there, since it cannot change the extension. `setExtension()` and
 `setNameWithExtension()` are not: given anything derived from user input, they can store a
 file under an extension your validations would have rejected, and the deny-list covers only
@@ -491,7 +489,7 @@ Failures accumulate rather than abort: every validation runs against every file,
 `getErrors()` reports them all at once.
 
 Throwing anything other than `GravityPdf\Upload\Exception` is caught too, but nothing it
-carries reaches `getErrors()` — not its message, which can leak server paths, and not its
+carries reaches `getErrors()`: not its message, which can leak server paths, and not its
 class name. Catch it in the validator and rethrow an `Upload\Exception` if either belongs in
 what the user sees.
 
@@ -505,9 +503,9 @@ Implement `StorageInterface` to store files somewhere other than the local files
 read from `$fileInfo->getPathname()`, return the destination, and throw
 `GravityPdf\Upload\Exception` on failure.
 
-The string you return is a locator you define — a key, a URL, an identifier —
-and `File::getUploadedLocators()` hands it back unchanged, so it is what the application
-rolls back with. Never return `''`: a caller cannot tell it from a usable value.
+The string you return is a locator you define (a key, a URL, an identifier) and
+`File::getUploadedLocators()` hands it back unchanged, so it is what the application rolls
+back with. Never return `''`: a caller cannot tell it from a usable value.
 
 A backend of your own has no `move_uploaded_file()` in it, so nothing stops it storing a file
 PHP never received. `FileInfo::isUploadedFile()` is where that is decided: validation refuses a
@@ -531,9 +529,9 @@ class ObjectStorage implements StorageInterface
 }
 ```
 
-The protections under "Security notes" — the deny-list, the `basename()` reduction, the
-symlink refusal, the staged write — live in `Storage\FileSystem`. A custom backend needs
-its own equivalents.
+The protections under "Security notes" (the deny-list, the `basename()` reduction, the
+symlink refusal, the staged write) live in `Storage\FileSystem`. A custom backend needs its
+own equivalents.
 
 ## Security notes
 
@@ -588,8 +586,8 @@ your own.
 | Markup and script | `html` `htm` `xhtml` `xht` `xhtm` `svg` `svgz` `xml` `xsl` `xslt` `js` `mjs` `swf` `mht` `mhtml` |
 
 The first seven groups are `FileSystem::EXECUTABLE_EXTENSIONS`, which a server runs. The
-last is `FileSystem::MARKUP_EXTENSIONS`, which a browser renders — serving one from your own
-origin is stored XSS. SVG is in that group because it carries `<script>` and event handlers.
+last is `FileSystem::MARKUP_EXTENSIONS`, which a browser renders. Serving one from your own
+origin is stored XSS; SVG is in that group because it carries `<script>` and event handlers.
 
 The list is not exhaustive. To extend rather than replace it:
 
@@ -613,7 +611,7 @@ $storage->blockExtensions(
 
 Entries are matched one dot-separated component at a time, and an entry containing dots is
 split the same way, so `tar.gz` blocks `tar` and `gz` rather than nothing at all. A leading
-dot is accepted and removed. Check a custom list against that — it may cover more than you
+dot is accepted and removed. Check a custom list against that: it may cover more than you
 intended.
 
 ### Turning the defaults off
@@ -658,10 +656,10 @@ php.ini, and `InvalidArgumentException` when the key is not in `$_FILES`.
 | `isValid(): bool` | Runs `is_uploaded_file()` plus every validation against every file, accumulating failures. Each call resets the error list and re-validates, so it is idempotent. |
 | `getErrors(): string[]` | All failures from the last validation run (`isValid()`, `upload()` or `uploadValid()`) plus any files that failed to transfer, as `"filename: message"`. A `$_FILES` entry too malformed to name a file is reported without the prefix. Sanitized, but must still be escaped on output. |
 | `upload(): bool` | Re-validates, then stores each file via the storage backend. All-or-nothing: one file failing validation stores none of them; call `uploadValid()` in its place to store the ones that passed. Throws `LogicException` when no validations are configured, and `Exception` when validation fails (details in `getErrors()`), when the collection is empty, or when storage fails (details in the exception message). |
-| `uploadValid(): bool` | Called in place of `upload()` on a multi-file field when a partial batch is acceptable; on a single-file field it changes nothing but how a rejection is reported. Re-validates, then stores only the files that passed, leaving the rest in `getErrors()`. Returns `true` when every file was stored, `false` when at least one was rejected — a file that failed to transfer counts as rejected. Nothing throws for a rejected file, so that return value is the only signal, and cleaning up what was already stored is the caller's on the `false` branch. Throws the same `LogicException` when no validations are configured, the same `Exception` on an empty collection, and whatever storage throws. |
-| `getUploadedLocators(): string[]` | Locators returned by the most recent `upload()` or `uploadValid()`, in whatever form the storage backend defines. Multi-file uploads are not atomic, so after a failure this lists what needs rolling back; after `uploadValid()` it is the files that passed *and* were stored, which a storage failure part-way through leaves shorter than the set that passed. Keyed by collection offset, so the array is sparse after `uploadValid()` and the locator at `$i` still belongs to `$file[$i]`. |
+| `uploadValid(): bool` | Re-validates, then stores only the files that passed, leaving the rest in `getErrors()`. Use it in place of `upload()` on a multi-file field where a partial batch is acceptable. Returns `true` when every file was stored and `false` when at least one was rejected, counting a file that failed to transfer. Nothing throws for a rejected file, so that return value is the only signal, and cleaning up what was already stored is yours on the `false` branch. Throws the same `LogicException` with no validations configured, the same `Exception` on an empty collection, and whatever storage throws. |
+| `getUploadedLocators(): string[]` | Locators returned by the most recent `upload()` or `uploadValid()`, in whatever form the storage backend defines. Multi-file uploads are not atomic, so after a failure this is what needs rolling back. Keyed by collection offset, so the array is sparse after `uploadValid()` and the locator at `$i` still belongs to `$file[$i]`. |
 | `allowUnvalidatedUploads(): File` | Let `upload()` and `uploadValid()` proceed with no validations configured. |
-| `allowsUnvalidatedUploads(): bool` | Whether that was allowed — an empty `getValidations()` does not say whether it was a decision. |
+| `allowsUnvalidatedUploads(): bool` | Whether that was allowed. An empty `getValidations()` does not say whether that was a decision. |
 | `beforeValidate(callable $callback): File` | Hook run per file before its validations. All four hooks receive that file's `FileInfoInterface`. |
 | `afterValidate(callable $callback): File` | Hook run per file after its validations, including a file that failed them. |
 | `beforeUpload(callable $callback): File` | Hook run per file before storage. |
@@ -715,7 +713,7 @@ constructor enables the deny-list and the `0640` file mode; see "Turning the def
 
 | Method | Description |
 |---|---|
-| `upload(FileInfoInterface $fileInfo): string` | Store the file and return its destination path. Reduces the name to a `basename()`, drops trailing dots and spaces, and rewrites the characters Windows disallows (`<` `>` `:` `"` `\|` `?` `*`) to `-`. Refuses a name starting with `.`, one carrying control or bidi characters, one Windows resolves to a device such as `CON.txt`, a blocked extension in any dot-separated component, and a symlinked destination. Writes to a staged file in the same directory and moves it into place, so no partial content is readable under the final name. With `$overwrite = false` the destination is claimed first with an empty file at the configured mode, so concurrent requests cannot both win it — a process killed mid-transfer leaves that 0-byte file behind. Throws `Exception` on any refusal. |
+| `upload(FileInfoInterface $fileInfo): string` | Store the file and return its destination path. Reduces the name to a `basename()`, drops trailing dots and spaces, and rewrites the characters Windows disallows (`<` `>` `:` `"` `\|` `?` `*`) to `-`. Refuses a name starting with `.`, one carrying control or bidi characters, one Windows resolves to a device such as `CON.txt`, a blocked extension in any dot-separated component, and a symlinked destination. Writes to a staged file in the same directory and moves it into place, so no partial content is readable under the final name. With `$overwrite = false` the destination is claimed first with an empty file at the configured mode, so concurrent requests cannot both win it; a process killed mid-transfer leaves that 0-byte file behind. Throws `Exception` on any refusal. |
 | `blockExtensions(array $extensions): FileSystem` | Set the extensions that are never written, checked against the sanitized extension at the write. A leading dot is accepted and removed, and an entry containing dots is split into its components, so `tar.gz` blocks `tar` and `gz`. Throws `InvalidArgumentException` on an empty list; use `allowAnyExtension()` for that. |
 | `setMode(?int $mode): FileSystem` | Permissions applied to each stored file, default `FileSystem::DEFAULT_MODE` (`0640`). `null` leaves the mode to the process umask. |
 | `acceptFilesNotUploadedByPhp(): FileSystem` | Store files PHP did not receive as an upload, for a `FileList` fed from PSR-7, a worker runtime or reassembled chunks. Off by default: the write otherwise goes through `move_uploaded_file()`, which refuses any other source. Pair it with an `isUploadedFile()` override. |
@@ -750,7 +748,7 @@ a public extension point and inventing a filename is not storage's job.
 |---|---|
 | `Filename::sanitizeNameWithExtension(string $filename): string` | The whole treatment for one string: splits name from extension, rewrites the first, validates the second, fits both to `MAX_LENGTH`. This is what `getErrors()` runs client-supplied names through. |
 | `Filename::MAX_LENGTH` / `MAX_EXTENSION_LENGTH` | `255` and `32` bytes. The name's budget is `MAX_LENGTH` minus the extension and its dot. |
-| `Filename::RESERVED_WINDOWS_NAMES` | The device names `setName()` blanks — `con`, `nul`, `lpt1`, and the `COM0`/`LPT0` and superscript variants. |
+| `Filename::RESERVED_WINDOWS_NAMES` | The device names `setName()` blanks: `con`, `nul`, `lpt1`, and the `COM0`/`LPT0` and superscript variants. |
 | `Filename::BIDI_CONTROLS` / `CONTROL_CHARACTERS` | The text-direction characters `setName()` deletes, and the control bytes it rewrites. `FileSystem` refuses a name still carrying either. |
 
 ### Exception
