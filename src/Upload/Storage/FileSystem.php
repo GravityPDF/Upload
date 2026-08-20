@@ -291,6 +291,7 @@ class FileSystem implements StorageInterface
            not, and are applied to whatever name it returns. Inside it, an override that said
            nothing about extensions dropped them both. */
         $filename = $this->resolveFilename($fileInfo);
+        $this->refuseUnsafeName($filename, $fileInfo);
         $this->refuseReservedWindowsName($filename, $fileInfo);
         $this->refuseBlockedExtensions($filename, $fileInfo);
 
@@ -521,7 +522,8 @@ class FileSystem implements StorageInterface
      * trustworthy as the implementation the caller (or `FileInfo::setFactory()`) installed.
      * This class should not assume sanitizing happened elsewhere.
      *
-     * @throws Exception If the name cannot be reduced to a safe filename
+     * Derivation only: this decides what the name *is*, and `upload()` decides whether it may
+     * be written. Overriding this therefore cannot drop a refusal — see `refuseUnsafeName()`.
      */
     protected function resolveFilename(FileInfoInterface $fileInfo): string
     {
@@ -543,19 +545,34 @@ class FileSystem implements StorageInterface
            the two in step. */
         $filename = (string) preg_replace('/[<>:"|?*]/', '-', $filename);
 
-        /* basename() has removed every separator. What remains to reject are the values that
-           are not usable filenames: the two directory entries, a name hidden from the shell
-           globbing and directory listings a cleanup script relies on, and the control
-           characters that let a name forge a line in a log or a terminal — the same set
-           `FileInfo` rewrites, read from the constant rather than copied, so the two cannot
-           drift apart again.
+        return $filename;
+    }
 
-           The bidi controls are refused for the reason the control characters are: they carry
-           no visual content of their own, so `resume\u{202E}gpj.exe` reads as `resumeexe.jpg`
-           wherever a person sees it while the stored file is still the executable. Refused
-           rather than deleted, because inventing a name is the value object's job — the shipped
-           `FileInfo` deletes exactly this set, so only an implementation of your own arrives
-           here with one. Keep the two in step. */
+    /**
+     * Refuse a name that is not a usable, visible filename
+     *
+     * `basename()` has removed every separator by the time this runs. What is left to reject
+     * are the two directory entries, a name hidden from the shell globbing and directory
+     * listings a cleanup script relies on, and the characters that let a name forge a line in
+     * a log or a terminal — `Filename::CONTROL_CHARACTERS` read from the constant rather than
+     * copied, so this and `FileInfo` cannot drift apart again.
+     *
+     * The bidi controls are refused for the reason the control characters are: they carry no
+     * visual content of their own, so `resume\u{202E}gpj.exe` reads as `resumeexe.jpg` wherever
+     * a person sees it while the stored file is still the executable. Refused rather than
+     * deleted, because inventing a name is the value object's job — the shipped `FileInfo`
+     * deletes exactly this set, so only an implementation of your own arrives here with one.
+     * Keep the two in step.
+     *
+     * A leading dot is refused here rather than left to the deny-list, which does not see one:
+     * `Filename::extensionComponents()` drops the empty component before the dot along with the
+     * first real one, so `.htaccess` presents no extension to match and `.env` is not on the
+     * list in the first place.
+     *
+     * @throws Exception If the name is not one that may be written
+     */
+    private function refuseUnsafeName(string $filename, FileInfoInterface $fileInfo): void
+    {
         if (
             $filename === ''
             || strpos($filename, '.') === 0
@@ -564,8 +581,6 @@ class FileSystem implements StorageInterface
         ) {
             throw new Exception('Invalid destination file name', $fileInfo);
         }
-
-        return $filename;
     }
 
     /**
