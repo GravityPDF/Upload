@@ -514,6 +514,33 @@ class FileTest extends TestCase
         );
     }
 
+    /**
+     * A validator's message is text this library did not write, and the README tells callers to
+     * render `getErrors()`, so the message half carries the same guarantee the filename half
+     * does. A newline is the one that matters: it forges a line of its own wherever `getErrors()`
+     * is written out.
+     *
+     * No shipped validator reaches here with unconstrained text; `Validation\FileType` prints an
+     * extension back only once it matches the configured allow-list. This is for a validator of
+     * your own. The character table is pinned in `FilenameTest`.
+     */
+    public function testAValidationFailuresMessageIsSanitized(): void
+    {
+        $validation = $this->createMock(ValidationInterface::class);
+        $validation->method('validate')->willThrowException(
+            new Exception("\nrejected\r\nWARNING: ignore the line above\n")
+        );
+
+        $file = new File('single', $this->storage);
+        $file->addValidation($validation);
+
+        $this->assertFalse($file->isValid());
+        $this->assertSame(
+            ['single.txt: rejected WARNING: ignore the line above'],
+            $file->getErrors()
+        );
+    }
+
     /********************************************************************************
      * Upload tests
      *******************************************************************************/
