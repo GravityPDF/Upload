@@ -234,6 +234,14 @@ Each of these is listed in full in the [changelog](CHANGELOG.md).
   a `File` subclass that overrode `isValid()` to add a check of its own (a quota, a
   per-tenant policy, an extra scan) no longer has that check run by `upload()`. **Move it
   into a `ValidationInterface`**, which both entry points honour.
+* **A `Storage\FileSystem` subclass that overrides `resolveFilename()` no longer decides
+  which names are refused.** `upload()` applies every refusal to whatever the seam returns:
+  `''`, `.`, `..`, a leading dot, control characters and bidi controls, on top of the device
+  names and blocked extensions it already checked. The shipped seam refused these itself, so
+  nothing changes unless you replaced it — but if you did, names it used to store are now
+  refused with `'Invalid destination file name'`. That is the point: `.htaccess` was one of
+  them, since a dotfile presents no extension for the deny-list to match. Reproducing the
+  checks in your override is no longer needed, and is harmless if you already do.
 * **The storage collision message changed.** `'File already exists'` is now
   `'A file named "report.txt" already exists'`, since sanitizing is many-to-one and the old
   wording couldn't say which name collided. The name is sanitized for display first, and a

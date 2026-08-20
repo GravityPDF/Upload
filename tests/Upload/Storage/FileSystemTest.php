@@ -604,25 +604,29 @@ class FileSystemTest extends TestCase
     }
 
     /**
-     * `resolveFilename()` is the naming seam, so the name this message quotes is a subclass's
-     * to choose: the base class refuses control and bidi characters in one, and an override is
-     * free not to. A storage exception is written to a log, which is the thing a control
-     * character forges a line in and a bidi control reorders.
+     * The message quotes a name, and `upload()` refuses these before the reservation runs, so
+     * this drives `reserveDestination()` directly — the branch is a backstop for a subclass
+     * that reserves a name itself rather than one reachable through `upload()`. A storage
+     * exception is written to a log, which is the thing a control character forges a line in
+     * and a bidi control reorders.
      *
      * @dataProvider providerNamesAnOverriddenSeamMayReturn
      */
-    public function testCollisionMessageSanitizesWhatTheSeamReturned(string $name, string $message): void
+    public function testCollisionMessageSanitizesTheNameItQuotes(string $name, string $message): void
     {
         $workingDirectory = $this->makeWorkingDirectory();
-        $storage = $this->makeUnsanitizingStorage($workingDirectory);
+        $destinationFile = $workingDirectory . '/' . $name;
 
-        $storage->upload($this->makeHostileFileInfo($name));
+        /* Something already under the name, so the exclusive create finds it in the way */
+        touch($destinationFile);
 
         $this->expectException(Exception::class);
         $this->expectExceptionMessage($message);
 
-        /* The same name again, so the reservation finds the first one in the way */
-        $storage->upload($this->makeHostileFileInfo($name));
+        (new ExposedFileSystem($workingDirectory))->reserve(
+            $destinationFile,
+            $this->makeHostileFileInfo($name)
+        );
     }
 
     /**
@@ -1136,6 +1140,42 @@ class FileSystemTest extends TestCase
         $this->expectExceptionMessage('Invalid destination file name');
 
         $storage->upload($this->makeHostileFileInfo('CON.txt'));
+    }
+
+    /**
+     * The same hoist, for the refusals that decide whether a name is a usable, visible file.
+     * They sat in `resolveFilename()` too, so `return basename($fileInfo->getNameWithExtension())`
+     * — the obvious override to write — stored every one of these. `.htaccess` is the loud one:
+     * the deny-list carries `htaccess`, but `extensionComponents()` drops the empty component
+     * before a leading dot along with the first real one, so a dotfile presents no extension to
+     * match and an upload directory gets a file that can turn execution back on.
+     *
+     * @dataProvider providerNamesUploadRefusesWhateverTheSeamSays
+     */
+    public function testOverridingTheNamingSeamDoesNotDropTheNameRefusals(string $name): void
+    {
+        $storage = $this->makeUnsanitizingStorage($this->makeWorkingDirectory());
+
+        $this->expectException(Exception::class);
+        $this->expectExceptionMessage('Invalid destination file name');
+
+        $storage->upload($this->makeHostileFileInfo($name));
+    }
+
+    /**
+     * @return array<string, array<int, string>>
+     */
+    public function providerNamesUploadRefusesWhateverTheSeamSays(): array
+    {
+        return [
+            'server configuration' => ['.htaccess'],
+            'dotfile' => ['.env'],
+            'control character' => ["report\x07.txt"],
+            'bidi override' => ["resume\xE2\x80\xAEtxt.gpj"],
+            'this directory' => ['.'],
+            'parent directory' => ['..'],
+            'nothing at all' => [''],
+        ];
     }
 
     public function testReturnsUploadedFileName(): void
