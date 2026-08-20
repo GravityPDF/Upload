@@ -488,6 +488,11 @@ $file->addValidation(new MaxDimensions(2048, 2048));
 Failures accumulate rather than abort: every validation runs against every file, and
 `getErrors()` reports them all at once.
 
+Your message is sanitized before it lands there: bidi controls are deleted and control
+characters collapse to a space, so a message built from user input cannot forge a log line
+or move a terminal cursor. That is not escaping, and the result still needs escaping on
+output.
+
 Throwing anything other than `GravityPdf\Upload\Exception` is caught too, but nothing it
 carries reaches `getErrors()`: not its message, which can leak server paths, and not its
 class name. Catch it in the validator and rethrow an `Upload\Exception` if either belongs in

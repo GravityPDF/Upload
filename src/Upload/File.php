@@ -271,6 +271,30 @@ class File implements ArrayAccess, IteratorAggregate, Countable
         return Filename::sanitizeNameWithExtension($fileInfo->getNameWithExtension());
     }
 
+    /**
+     * A validation failure's message, sanitized for use in an error string
+     *
+     * `ValidationInterface` is a public extension point and a validator reads the file through
+     * `FileInfoInterface`, which is another one, so a message can carry whatever either
+     * returns: `Validation\FileType` names the offending extension, and on a custom
+     * implementation that string has not been through `FileInfo::setExtension()`. Sanitized
+     * here rather than in each validator because `getErrors()` is what carries the guarantee,
+     * and a validator of your own has to be covered by it too.
+     *
+     * Bidi controls are deleted, as they are in a filename, since they carry no visual content
+     * of their own. Control characters collapse to a single space rather than to `-`: this is a
+     * sentence, and the run of them a forged log line needs should read as the break it was.
+     *
+     * Sanitizing is not escaping — the result still needs escaping where it lands.
+     */
+    private static function sanitizeMessage(string $message): string
+    {
+        $message = (string) preg_replace('/' . Filename::BIDI_CONTROLS . '/', '', $message);
+        $message = (string) preg_replace('/(?:' . Filename::CONTROL_CHARACTERS . ')+/', ' ', $message);
+
+        return trim($message);
+    }
+
     /********************************************************************************
      * Helpers
      *******************************************************************************/
@@ -701,7 +725,11 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                         $validation->validate($fileInfo);
                     } catch (Exception $e) {
                         $sanitizedFilename = $sanitizedFilename ?? $this->getSanitizedFilename($fileInfo);
-                        $this->errors[] = sprintf('%s: %s', $sanitizedFilename, $e->getMessage());
+                        $this->errors[] = sprintf(
+                            '%s: %s',
+                            $sanitizedFilename,
+                            self::sanitizeMessage($e->getMessage())
+                        );
                     } catch (LogicException $e) {
                         /* By PHP's own definition a bug in the program, not a failed file.
                            Absorbed, `getHash('sha255')` in a validator would be reported as a

@@ -3,6 +3,7 @@
 namespace GravityPdf\Upload;
 
 use GravityPdf\Upload\Storage\FileSystem;
+use GravityPdf\Upload\Validation\FileType;
 use GravityPdf\Upload\Validation\Mimetype;
 use GravityPdf\Upload\Validation\Size;
 use GravityPdf\Upload\ValidationInterface;
@@ -510,6 +511,65 @@ class FileTest extends TestCase
 
         $this->assertSame(
             [File::formatUploadFailure("re\nport\x07x.txt", UPLOAD_ERR_CANT_WRITE)],
+            $file->getErrors()
+        );
+    }
+
+    /**
+     * `Validation\FileType` names the offending extension in its own message, and on a custom
+     * `FileInfoInterface` that string has never been through `FileInfo::setExtension()`. The
+     * README encourages rendering `getErrors()`, so the message half has to carry the same
+     * guarantee the filename half does.
+     */
+    public function testAValidationMessageCannotCarryHostileCharactersFromACustomFileInfo(): void
+    {
+        $hostile = "txt\x1b[2K\u{202E}gpj";
+
+        FileInfo::setFactory(function ($tmpName, $name) use ($hostile) {
+            $fileInfo = $this->getMockBuilder(FileInfo::class)
+                ->setConstructorArgs([$tmpName, $name])
+                ->onlyMethods(['isUploadedFile', 'getExtension', 'getMimetype'])
+                ->getMock();
+
+            $fileInfo->method('isUploadedFile')->willReturn(true);
+            $fileInfo->method('getExtension')->willReturn($hostile);
+            $fileInfo->method('getMimetype')->willReturn('text/plain');
+
+            return $fileInfo;
+        });
+
+        $file = new File('single', $this->storage);
+        /* The extension is allowed and the media type is not, which is the branch that prints
+           the extension back */
+        $file->addValidation(new FileType($hostile, 'image/png'));
+
+        $this->assertFalse($file->isValid());
+
+        $message = $file->getErrors()[0];
+
+        $this->assertSame(0, preg_match('/[\x00-\x1F\x7F]/', $message), $message);
+        $this->assertFalse(Filename::hasBidiControls($message), $message);
+        $this->assertStringContainsString('extension', $message);
+    }
+
+    /**
+     * `ValidationInterface` is an extension point as well, so the same guarantee has to hold
+     * for a message this library did not write. A newline is the one that matters: it forges a
+     * line of its own wherever `getErrors()` is written out.
+     */
+    public function testAValidationMessageCannotForgeALineBreak(): void
+    {
+        $validation = $this->createMock(ValidationInterface::class);
+        $validation->method('validate')->willThrowException(
+            new Exception("rejected\nWARNING: ignore the line above")
+        );
+
+        $file = new File('single', $this->storage);
+        $file->addValidation($validation);
+
+        $this->assertFalse($file->isValid());
+        $this->assertSame(
+            ['single.txt: rejected WARNING: ignore the line above'],
             $file->getErrors()
         );
     }
