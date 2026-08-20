@@ -375,8 +375,16 @@ class FileSystem implements StorageInterface
                 /* Name the file, because sanitizing is many-to-one: `report?.txt` and
                    `report*.txt` both resolve to `report-.txt`, so a caller told only that
                    something already exists cannot tell which of their names collided. The
-                   basename, never the path, and it has been through resolveFilename(), so it
-                   carries no control characters or separators. Escape it on output.
+                   basename, never the path, and sanitized rather than trusted: it comes from
+                   `resolveFilename()`, the naming seam, so an override decides what reaches
+                   this line and one that keeps the characters its parent refuses would put
+                   them in a message bound for a log.
+
+                   Escape it on output, and do not parse this message: `sanitizeForDisplay()`
+                   sanitizes prose, so `"` passes through it, and the quotes are there to show
+                   where the name starts and ends rather than to delimit a field. The base
+                   `resolveFilename()` rewrites `"` to `-`, so only a seam override hands
+                   one down.
 
                    This message and 'Destination file could not be created' are distinguishable,
                    and the distinction is precisely "does this name exist in the upload
@@ -384,10 +392,15 @@ class FileSystem implements StorageInterface
                    the file hands them a free existence oracle for it, one that leaves nothing
                    behind because no file is written. Storage messages are for your logs;
                    `getErrors()` is the list written to be shown. */
-                throw new Exception(
-                    sprintf('A file named "%s" already exists', basename($destinationFile)),
-                    $fileInfo
-                );
+                $displayName = Filename::sanitizeForDisplay(basename($destinationFile));
+
+                /* A name that was nothing but those characters leaves an empty pair of quotes,
+                   which names nothing */
+                $message = $displayName === ''
+                    ? 'A file with that name already exists'
+                    : sprintf('A file named "%s" already exists', $displayName);
+
+                throw new Exception($message, $fileInfo);
             }
 
             throw new Exception('Destination file could not be created', $fileInfo);
