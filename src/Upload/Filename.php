@@ -36,12 +36,14 @@ namespace GravityPdf\Upload;
 /**
  * What this library considers a usable filename
  *
- * One home for the rules, because two layers apply them to different ends. `FileInfo`
+ * One home for the rules, because three layers apply them to different ends. `FileInfo`
  * **rewrites** a name it is given: sanitizing a client-supplied string is its job. `Storage`
  * **refuses** a name that still breaks a rule, because a `FileInfoInterface` is a public
- * extension point and inventing a filename is not storage's job. Both read the rules from here
- * so they cannot disagree about what the rules are, as they did before 4.0.0 when each layer
- * carried its own control-character filter and each had to be fixed separately.
+ * extension point and inventing a filename is not storage's job. `File` **renders**, through
+ * `sanitizeText()`, which applies the same character sets to prose rather than to a name. All
+ * three read the rules from here so they cannot disagree about what the rules are, as they did
+ * before 4.0.0 when each layer carried its own control-character filter and each had to be
+ * fixed separately.
  *
  * @package Upload
  * @since   4.0.0
@@ -136,6 +138,32 @@ final class Filename
         $name = self::sanitizeName((string) pathinfo($filename, PATHINFO_FILENAME), $extension, $reserved);
 
         return $extension === '' ? $name : sprintf('%s.%s', $name, $extension);
+    }
+
+    /**
+     * Make a string safe to render as one line of prose
+     *
+     * The other flavour of sanitizing. `sanitizeName()` and friends answer to what a *filename*
+     * may be — a 255-byte budget, reserved device names, `%` and `/` rewritten — none of which a
+     * sentence should be put through: `Must be one of: image/png` would come back as
+     * `Must be one of- image-png`. What prose shares with a filename is the two character sets,
+     * so they are applied here from the same constants rather than a caller assembling its own
+     * pattern out of them.
+     *
+     * Bidi controls are deleted, as they are in a name, because they carry no visual content of
+     * their own. Control characters collapse to a single space rather than to `-`: this is a
+     * sentence, and the run of them a forged log line needs should read as the break it was.
+     * UTF-8 is forced for the reason `finalize()` forces it — a caller running `getErrors()`
+     * through `json_encode()` gets `false` for the whole array otherwise.
+     *
+     * Sanitizing is not escaping. The result still needs escaping where it lands.
+     */
+    public static function sanitizeText(string $value): string
+    {
+        $value = (string) preg_replace('/' . self::BIDI_CONTROLS . '/', '', $value);
+        $value = (string) preg_replace('/(?:' . self::CONTROL_CHARACTERS . ')+/', ' ', $value);
+
+        return trim(self::forceValidUtf8($value));
     }
 
     /**

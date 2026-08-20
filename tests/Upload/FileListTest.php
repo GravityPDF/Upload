@@ -209,9 +209,22 @@ class FileListTest extends TestCase
     public function testAHostileKeyIsSanitizedBeforeItReachesTheExceptionMessage(): void
     {
         $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('Entry "av-atar" must be an instance of');
+        $this->expectExceptionMessage('Entry "av atar" must be an instance of');
 
         new FileList(["av\natar" => 'not a FileInfo'], $this->storage);
+    }
+
+    /**
+     * Through `Filename::sanitizeText()` rather than the filename rules, because the developer
+     * has to recognise the key in their own array. The filename rules would report this one as
+     * `user-avatar`, and a key called `con` as `unnamed-file`.
+     */
+    public function testAKeyIsNotPutThroughTheFilenameRules(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Entry "user.avatar" must be an instance of');
+
+        new FileList(['user.avatar' => 'not a FileInfo'], $this->storage);
     }
 
     /**

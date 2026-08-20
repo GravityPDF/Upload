@@ -55,7 +55,7 @@ The `phpunit` workflow carries a second job, `cross-file-system`, which mounts a
 
 **The constructor never trusts the shape of `$_FILES`.** A PSR-7 bridge or test harness can supply an entry that is not an array, or one missing `tmp_name`/`name`/`error`, or a multi-file entry whose keys are not parallel arrays. Every such shape is recorded as `'An uploaded file was sent in a format that cannot be read'` rather than warning or raising a `TypeError` — remote input must not warn.
 
-**Validation errors accumulate; they don't abort.** `File::isValid()` runs every validation against every file and collects the failures, so `getErrors()` reports all of them at once. `upload()` throws only after the fact, with the generic message `'File validation failed'` — the detail is in `getErrors()`. An `Upload\Exception`'s message is sanitized before it lands in `getErrors()` (`File::sanitizeMessage()`): bidi controls deleted, control characters collapsed to a space. It is done there rather than in each validator because `getErrors()` is what carries the guarantee, and `ValidationInterface` is a public extension point — `Validation\FileType` names the offending extension, which on a custom `FileInfoInterface` never went through `setExtension()`. A validator throwing something other than `Upload\Exception` is absorbed too, with **both** its message and its class name dropped — a PHP runtime message can contain absolute paths, and a class name is the application's internal structure.
+**Validation errors accumulate; they don't abort.** `File::isValid()` runs every validation against every file and collects the failures, so `getErrors()` reports all of them at once. `upload()` throws only after the fact, with the generic message `'File validation failed'` — the detail is in `getErrors()`. An `Upload\Exception`'s message goes through `Filename::sanitizeText()` before it lands in `getErrors()`. It is sanitized there rather than in each validator because `getErrors()` is what carries the guarantee, and `ValidationInterface` is a public extension point — `Validation\FileType` names the offending extension, which on a custom `FileInfoInterface` never went through `setExtension()`. A validator throwing something other than `Upload\Exception` is absorbed too, with **both** its message and its class name dropped — a PHP runtime message can contain absolute paths, and a class name is the application's internal structure.
 
 **`LogicException` is the exception to that.** It is re-thrown rather than absorbed, because PHP defines the type as a bug in the program. `FileInfo::getHash()` throws `InvalidArgumentException` for an unsupported algorithm precisely so a misspelling reaches the developer instead of the end user as a rejected upload. Absorb it and that guarantee is empty.
 
@@ -97,6 +97,14 @@ found separately. `MAX_LENGTH`, `MAX_EXTENSION_LENGTH`, `CONTROL_CHARACTERS`, `B
 `RESERVED_WINDOWS_NAMES` are declared once, on `Filename`, and both layers call its splitters
 (`deviceComponent()`, `extensionComponents()`, `normalizeComponents()`) rather than splitting for
 themselves. Add a rule there, not in a caller.
+
+`Filename::sanitizeText()` is the same rules applied to prose rather than to a name — the two
+character sets, with controls collapsed to a space instead of `-` and none of the filename
+budget, device-name or `%`/`/` handling. `File` runs a validator's message through it and
+`FileList::describeKey()` runs a caller's array key through it, so neither assembles a pattern
+out of the constants for itself. A key is deliberately **not** put through the filename rules:
+those report `user.avatar` as `user-avatar` and a key called `con` as `unnamed-file`, and the
+developer has to recognise it in their own array.
 
 `FileInfo::setName()` sanitizes rather than validates: unsafe characters in the **name** are rewritten, never rejected. The steps, in order:
 

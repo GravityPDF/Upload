@@ -140,14 +140,18 @@ class FileList extends File
      *
      * Sanitized, because a key here is often a `multipart/form-data` field name the client
      * chose: this message is developer-facing and normally lands in a log, which is exactly
-     * where a control character or a bidi override does its work. Same guarantee `getErrors()`
-     * carries, through the same rules.
+     * where a control character or a bidi override does its work.
+     *
+     * Through `sanitizeText()` rather than the filename rules, because a key is not a filename
+     * and the developer has to recognise it in their own array: those rules rewrite the dot in
+     * `user.avatar`, blank a key called `con` to `unnamed-file`, and cut anything past 255
+     * bytes. Same character sets, applied to an identifier rather than to a name.
      *
      * @param int|string $key
      */
     private function describeKey($key): string
     {
-        return Filename::sanitizeNameWithExtension((string) $key);
+        return Filename::sanitizeText((string) $key);
     }
 
     /**

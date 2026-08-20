@@ -523,7 +523,9 @@ class FileTest extends TestCase
      */
     public function testAValidationMessageCannotCarryHostileCharactersFromACustomFileInfo(): void
     {
-        $hostile = "txt\x1b[2K\u{202E}gpj";
+        /* C0 (ESC), C1 (U+0085, which ends a line for anything reading `\R`), a bidi override,
+           and a byte that is not valid UTF-8 at all */
+        $hostile = "txt\x1b[2K\u{0085}\u{202E}\xC3\x28gpj";
 
         FileInfo::setFactory(function ($tmpName, $name) use ($hostile) {
             $fileInfo = $this->getMockBuilder(FileInfo::class)
@@ -547,21 +549,35 @@ class FileTest extends TestCase
 
         $message = $file->getErrors()[0];
 
-        $this->assertSame(0, preg_match('/[\x00-\x1F\x7F]/', $message), $message);
-        $this->assertFalse(Filename::hasBidiControls($message), $message);
-        $this->assertStringContainsString('extension', $message);
+        /* Pinned as a literal, not with `Filename::hasControlCharacters()`: that predicate
+           reads the same constant the sanitizing does, so narrowing the constant would stop
+           both seeing a character and the assertion would pass with the byte still in the
+           string. ESC and U+0085 have each become a space, U+202E and the invalid \xC3 are
+           gone, and the `[2k` and `(` they were hiding among are ordinary text. */
+        $this->assertSame(
+            'single.txt: File contents do not match the "txt [2k (gpj" extension. '
+            . 'Must be one of: image/png',
+            $message
+        );
+
+        /* The README tells callers to render getErrors(); an AJAX endpoint json_encodes it,
+           which returns false for the whole array on one invalid byte */
+        $this->assertIsString(json_encode($file->getErrors()));
     }
 
     /**
      * `ValidationInterface` is an extension point as well, so the same guarantee has to hold
      * for a message this library did not write. A newline is the one that matters: it forges a
      * line of its own wherever `getErrors()` is written out.
+     *
+     * A run of them collapses to one space, and the leading and trailing ones go entirely,
+     * rather than leaving `'single.txt:  rejected'` with a gap where the break was.
      */
     public function testAValidationMessageCannotForgeALineBreak(): void
     {
         $validation = $this->createMock(ValidationInterface::class);
         $validation->method('validate')->willThrowException(
-            new Exception("rejected\nWARNING: ignore the line above")
+            new Exception("\nrejected\r\nWARNING: ignore the line above\n")
         );
 
         $file = new File('single', $this->storage);

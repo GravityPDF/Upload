@@ -488,10 +488,11 @@ $file->addValidation(new MaxDimensions(2048, 2048));
 Failures accumulate rather than abort: every validation runs against every file, and
 `getErrors()` reports them all at once.
 
-Your message is sanitized before it lands there: bidi controls are deleted and control
-characters collapse to a space, so a message built from user input cannot forge a log line
-or move a terminal cursor. That is not escaping, and the result still needs escaping on
-output.
+Your message goes through `Filename::sanitizeText()` before it lands there: bidi controls are
+deleted, control characters collapse to a space, and the result is forced to valid UTF-8. So a
+message built from user input cannot forge a log line, move a terminal cursor, or make
+`json_encode($file->getErrors())` return `false`. That is not escaping, and the result still
+needs escaping on output.
 
 Throwing anything other than `GravityPdf\Upload\Exception` is caught too, but nothing it
 carries reaches `getErrors()`: not its message, which can leak server paths, and not its
@@ -752,6 +753,7 @@ a public extension point and inventing a filename is not storage's job.
 | Member | Description |
 |---|---|
 | `Filename::sanitizeNameWithExtension(string $filename): string` | The whole treatment for one string: splits name from extension, rewrites the first, validates the second, fits both to `MAX_LENGTH`. This is what `getErrors()` runs client-supplied names through. |
+| `Filename::sanitizeText(string $value): string` | The same character sets applied to prose rather than to a name: bidi controls deleted, runs of control characters collapsed to a single space, the result forced to valid UTF-8. No length limit, no device-name blanking, and `%`, `/` and dots are left alone. This is what `getErrors()` runs a validation failure's message through. |
 | `Filename::MAX_LENGTH` / `MAX_EXTENSION_LENGTH` | `255` and `32` bytes. The name's budget is `MAX_LENGTH` minus the extension and its dot. |
 | `Filename::RESERVED_WINDOWS_NAMES` | The device names `setName()` blanks: `con`, `nul`, `lpt1`, and the `COM0`/`LPT0` and superscript variants. |
 | `Filename::BIDI_CONTROLS` / `CONTROL_CHARACTERS` | The text-direction characters `setName()` deletes, and the control bytes it rewrites. `FileSystem` refuses a name still carrying either. |
