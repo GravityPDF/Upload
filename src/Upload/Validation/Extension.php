@@ -34,9 +34,12 @@ declare(strict_types=1);
 namespace GravityPdf\Upload\Validation;
 
 use GravityPdf\Upload\AsciiCase;
+use GravityPdf\Upload\ErrorCode;
 use GravityPdf\Upload\Exception;
 use GravityPdf\Upload\FileInfoInterface;
 use GravityPdf\Upload\ValidationInterface;
+
+use function GravityPdf\Upload\__;
 
 /**
  * Validate File Extension
@@ -79,8 +82,11 @@ class Extension implements ValidationInterface
 
         if (!in_array($fileExtension, $this->allowedExtensions, true)) {
             throw new Exception(
-                sprintf('Invalid file extension. Must be one of: %s', implode(', ', $this->allowedExtensions)),
-                $fileInfo
+                /* translators: %1$s: comma-separated list of the accepted file extensions */
+                __('Invalid file extension. Must be one of: %1$s'),
+                $fileInfo,
+                ErrorCode::EXTENSION_NOT_ALLOWED,
+                [implode(', ', $this->allowedExtensions)]
             );
         }
     }

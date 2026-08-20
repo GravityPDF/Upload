@@ -34,6 +34,7 @@ declare(strict_types=1);
 namespace GravityPdf\Upload\Storage;
 
 use InvalidArgumentException;
+use GravityPdf\Upload\ErrorCode;
 use GravityPdf\Upload\Exception;
 use GravityPdf\Upload\Filename;
 use GravityPdf\Upload\FileInfoInterface;
@@ -301,7 +302,7 @@ class FileSystem implements StorageInterface
            ordinary case with a message that says what is wrong; it is not what makes the write
            safe, because anything checked here can change before the write happens. */
         if (is_link($destinationFile)) {
-            throw new Exception('Destination is a symbolic link', $fileInfo);
+            throw new Exception('Destination is a symbolic link', $fileInfo, ErrorCode::DESTINATION_IS_SYMLINK);
         }
 
         $stagingFile = $this->createStagingPath($fileInfo);
@@ -313,7 +314,7 @@ class FileSystem implements StorageInterface
         if ($this->moveIntoStaging($fileInfo->getPathname(), $stagingFile) === false) {
             $this->discardFailedUpload($stagingFile, $destinationFile);
 
-            throw new Exception('File could not be moved to final destination.', $fileInfo);
+            throw new Exception('File could not be moved to final destination.', $fileInfo, ErrorCode::MOVE_FAILED);
         }
 
         /* On the staged file, so there is no moment where the finished upload is readable
@@ -321,13 +322,17 @@ class FileSystem implements StorageInterface
         if ($this->mode !== null && @chmod($stagingFile, $this->mode) === false) {
             $this->discardFailedUpload($stagingFile, $destinationFile);
 
-            throw new Exception('Permissions could not be applied to the stored file', $fileInfo);
+            throw new Exception(
+                'Permissions could not be applied to the stored file',
+                $fileInfo,
+                ErrorCode::CHMOD_FAILED
+            );
         }
 
         if (@rename($stagingFile, $destinationFile) === false) {
             $this->discardFailedUpload($stagingFile, $destinationFile);
 
-            throw new Exception('File could not be moved to final destination.', $fileInfo);
+            throw new Exception('File could not be moved to final destination.', $fileInfo, ErrorCode::MOVE_FAILED);
         }
 
         return $destinationFile;
@@ -348,7 +353,14 @@ class FileSystem implements StorageInterface
         try {
             $unique = bin2hex(random_bytes(16));
         } catch (\Throwable $e) {
-            throw new Exception('Could not generate a temporary file name', $fileInfo, 0, $e);
+            throw new Exception(
+                'Could not generate a temporary file name',
+                $fileInfo,
+                ErrorCode::STAGING_NAME_FAILED,
+                [],
+                0,
+                $e
+            );
         }
 
         return $this->directory . 'upload-' . $unique . '.part';
@@ -397,14 +409,27 @@ class FileSystem implements StorageInterface
 
                 /* A name that was nothing but those characters leaves an empty pair of quotes,
                    which names nothing */
-                $message = $displayName === ''
-                    ? 'A file with that name already exists'
-                    : sprintf('A file named "%s" already exists', $displayName);
+                if ($displayName === '') {
+                    throw new Exception(
+                        'A file with that name already exists',
+                        $fileInfo,
+                        ErrorCode::DESTINATION_EXISTS
+                    );
+                }
 
-                throw new Exception($message, $fileInfo);
+                throw new Exception(
+                    'A file named "%1$s" already exists',
+                    $fileInfo,
+                    ErrorCode::DESTINATION_EXISTS,
+                    [$displayName]
+                );
             }
 
-            throw new Exception('Destination file could not be created', $fileInfo);
+            throw new Exception(
+                'Destination file could not be created',
+                $fileInfo,
+                ErrorCode::DESTINATION_NOT_CREATED
+            );
         }
 
         $opened = fstat($handle);
@@ -428,7 +453,11 @@ class FileSystem implements StorageInterface
                takes the caller's name permanently, so every later upload of it collides. */
             $this->releaseReservation($destinationFile, $opened);
 
-            throw new Exception('Destination file could not be created', $fileInfo);
+            throw new Exception(
+                'Destination file could not be created',
+                $fileInfo,
+                ErrorCode::DESTINATION_NOT_CREATED
+            );
         }
 
         if ($opened['dev'] !== $entry['dev'] || $opened['ino'] !== $entry['ino']) {
@@ -437,7 +466,7 @@ class FileSystem implements StorageInterface
                upload directory. Take that back too. */
             $this->releaseReservation($destinationFile, $opened);
 
-            throw new Exception('Destination is a symbolic link', $fileInfo);
+            throw new Exception('Destination is a symbolic link', $fileInfo, ErrorCode::DESTINATION_IS_SYMLINK);
         }
 
         /* `x` creates at `0666 & ~umask`, which is usually world-readable, and the placeholder
@@ -579,7 +608,7 @@ class FileSystem implements StorageInterface
             || Filename::hasControlCharacters($filename)
             || Filename::hasBidiControls($filename)
         ) {
-            throw new Exception('Invalid destination file name', $fileInfo);
+            throw new Exception('Invalid destination file name', $fileInfo, ErrorCode::INVALID_DESTINATION_NAME);
         }
     }
 
@@ -597,7 +626,7 @@ class FileSystem implements StorageInterface
     private function refuseReservedWindowsName(string $filename, FileInfoInterface $fileInfo): void
     {
         if (Filename::isReservedDeviceComponent(Filename::deviceComponent($filename))) {
-            throw new Exception('Invalid destination file name', $fileInfo);
+            throw new Exception('Invalid destination file name', $fileInfo, ErrorCode::INVALID_DESTINATION_NAME);
         }
     }
 
@@ -619,8 +648,10 @@ class FileSystem implements StorageInterface
 
             if (in_array($component, $this->blockedExtensions, true)) {
                 throw new Exception(
-                    sprintf('Files with the extension "%s" cannot be stored', $component),
-                    $fileInfo
+                    'Files with the extension "%1$s" cannot be stored',
+                    $fileInfo,
+                    ErrorCode::BLOCKED_EXTENSION,
+                    [$component]
                 );
             }
         }

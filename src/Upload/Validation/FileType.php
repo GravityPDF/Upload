@@ -34,10 +34,13 @@ declare(strict_types=1);
 namespace GravityPdf\Upload\Validation;
 
 use GravityPdf\Upload\AsciiCase;
+use GravityPdf\Upload\ErrorCode;
 use GravityPdf\Upload\Exception;
 use GravityPdf\Upload\FileInfoInterface;
 use GravityPdf\Upload\ValidationInterface;
 use InvalidArgumentException;
+
+use function GravityPdf\Upload\__;
 
 /**
  * Validate File Extension Against Media Type
@@ -160,11 +163,11 @@ class FileType implements ValidationInterface
 
         if (!isset($this->allowedTypes[$extension])) {
             throw new Exception(
-                sprintf(
-                    'Invalid file extension. Must be one of: %s',
-                    implode(', ', array_keys($this->allowedTypes))
-                ),
-                $fileInfo
+                /* translators: %1$s: comma-separated list of the accepted file extensions */
+                __('Invalid file extension. Must be one of: %1$s'),
+                $fileInfo,
+                ErrorCode::EXTENSION_NOT_ALLOWED,
+                [implode(', ', array_keys($this->allowedTypes))]
             );
         }
 
@@ -174,12 +177,11 @@ class FileType implements ValidationInterface
 
         if (!in_array($mimetype, $this->allowedTypes[$extension], true)) {
             throw new Exception(
-                sprintf(
-                    'File contents do not match the "%s" extension. Must be one of: %s',
-                    $extension,
-                    implode(', ', $this->allowedTypes[$extension])
-                ),
-                $fileInfo
+                /* translators: 1: the file's extension, 2: the media types it may hold */
+                __('File contents do not match the "%1$s" extension. Must be one of: %2$s'),
+                $fileInfo,
+                ErrorCode::FILE_CONTENTS_MISMATCH,
+                [$extension, implode(', ', $this->allowedTypes[$extension])]
             );
         }
     }

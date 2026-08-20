@@ -373,7 +373,7 @@ class FileListTest extends TestCase
         $list->addValidation(new Mimetype(['text/plain']));
 
         $this->assertFalse($list->isValid());
-        $this->assertSame(['foo.txt: Is not an uploaded file'], $list->getErrors());
+        $this->assertSame(['foo.txt: This file was not received as an upload'], $list->getErrors());
     }
 
     /**

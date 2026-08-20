@@ -78,8 +78,8 @@ class FileList extends File
      * annotated `ArrayAccess<int, FileInfoInterface>`; keying the collection by a caller's
      * `'avatar'` would contradict all three. A caller's keys are usually form field names
      * they still need, so `$fileInfos`' keys are kept beside the collection instead and read
-     * back through `getSourceKeys()`. `$failures`' keys are not: a failure is an error string,
-     * not a member of the collection, so there is no offset to hang it on.
+     * back through `getSourceKeys()`. `$failures`' keys are not: a failure is a name and a
+     * code, not a member of the collection, so there is no offset to hang it on.
      *
      * A malformed entry raises rather than being recorded through `getErrors()`, which is the
      * opposite of what the `$_FILES` path does with one. `$_FILES` is remote input, so a
@@ -128,7 +128,7 @@ class FileList extends File
                 );
             }
 
-            $this->recordError(static::formatUploadFailure($failure[0], $failure[1]));
+            $this->recordUploadFailure($failure[0], $failure[1]);
         }
 
         /* The tail `File::__construct()` also runs, so an invariant added there holds here */

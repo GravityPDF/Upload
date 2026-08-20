@@ -1,0 +1,55 @@
+name: Translation catalogue
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# The workflows only read the repository; nothing needs a write-capable GITHUB_TOKEN.
+permissions:
+  contents: read
+
+# Cancels all previous workflow runs for pull requests that have not completed.
+concurrency:
+  # The concurrency group contains the workflow name and the branch name for pull requests
+  # or the commit hash for any other events.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: true
+
+# i18n/upload.pot is the msgid of every string this library shows an end user, and a consumer's
+# translations are keyed on those exact strings. Reword one without regenerating and their
+# translation silently reverts to English, on the failure path, where nobody is looking. This
+# regenerates the catalogue and fails if the committed one is not what the source produces.
+jobs:
+  catalogue:
+    name: Catalogue is current
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.0
+
+      - name: Install PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.35.5
+        with:
+          php-version: '8.5'
+
+      # xgettext reads the marker given -k__:1, so the extraction needs no PHP
+      # dependency of its own. Present on ubuntu-latest, installed here so the job does not
+      # start passing or failing on what the runner image happens to ship.
+      - name: Install gettext
+        run: sudo apt-get install --yes --no-install-recommends gettext
+
+      - name: Regenerate the catalogue
+        run: composer i18n:pot
+
+      - name: Fail if the committed catalogue is not what the source produces
+        # --porcelain rather than `git diff --exit-code`, which is blind to the file being
+        # untracked and would pass silently if the path were ever moved or ignored.
+        run: |
+          test -z "$(git status --porcelain -- i18n/upload.pot)" || {
+            git --no-pager diff -- i18n/upload.pot
+            echo "i18n/upload.pot is out of date — run 'composer i18n:pot'." >&2
+            exit 1
+          }
