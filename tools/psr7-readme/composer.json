@@ -1,0 +1,21 @@
+{
+    "description": "Runs the README's PSR-7 bridge against real PSR-7 implementations. Kept out of the root manifest so the library itself takes no PSR-7 dependency. Versions are pinned exactly: composer.lock is gitignored repo-wide, and a check that reads code out of README.md is not worth failing on somebody else's release. Bump them deliberately.",
+    "require": {
+        "gravitypdf/upload": "@dev",
+        "nyholm/psr7": "1.8.2",
+        "guzzlehttp/psr7": "2.13.0",
+        "psr/http-message": "2.0",
+        "psr/http-factory": "1.1.0"
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../../",
+            "options": {
+                "symlink": true
+            }
+        }
+    ],
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}

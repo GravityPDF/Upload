@@ -89,6 +89,35 @@ class FileTest extends TestCase
         });
     }
 
+    /**
+     * Install a `FileInfo` factory that counts how often a file's name is read
+     *
+     * `getSanitizedFilename()` is the only caller, so the count is how many times this run
+     * sanitized a name — which is what the two tests below are about.
+     *
+     * @param int $sanitized Incremented on every read
+     */
+    protected function stubNameReadCounter(int &$sanitized): void
+    {
+        FileInfo::setFactory(function ($tmpName, $name) use (&$sanitized) {
+            $fileInfo = $this->getMockBuilder(FileInfo::class)
+                ->setConstructorArgs([$tmpName, $name])
+                ->onlyMethods(['isUploadedFile', 'getNameWithExtension'])
+                ->getMock();
+
+            $fileInfo->method('isUploadedFile')->willReturn(true);
+            $fileInfo->method('getNameWithExtension')->willReturnCallback(
+                static function () use (&$sanitized, $name): string {
+                    $sanitized++;
+
+                    return (string) $name;
+                }
+            );
+
+            return $fileInfo;
+        });
+    }
+
     /* phpcs:ignore */
     public function tear_down()
     {
@@ -292,6 +321,38 @@ class FileTest extends TestCase
         $this->assertFalse($file->isValid());
     }
 
+    /**
+     * Sanitizing is several regex passes and only an error string reads the result, so a file
+     * that passes every validation — the ordinary case — must never pay for it.
+     */
+    public function testAFileThatPassesIsNeverSanitizedForAnErrorItDoesNotHave(): void
+    {
+        $sanitized = 0;
+
+        $this->stubNameReadCounter($sanitized);
+
+        $file = new File('multiple', $this->storage);
+        $file->addValidation(new Mimetype(['text/plain']));
+
+        $this->assertTrue($file->isValid());
+        $this->assertSame(0, $sanitized, 'A passing file had its name sanitized for no error');
+    }
+
+    /** …and a file that fails several validations sanitizes once, not once per failure */
+    public function testAFailingFileIsSanitizedOnceForAllOfItsFailures(): void
+    {
+        $sanitized = 0;
+
+        $this->stubNameReadCounter($sanitized);
+
+        $file = new File('single', $this->storage);
+        $file->addValidations([new Mimetype(['text/csv']), new Mimetype(['image/png'])]);
+
+        $this->assertFalse($file->isValid());
+        $this->assertCount(2, $file->getErrors());
+        $this->assertSame(1, $sanitized);
+    }
+
     /********************************************************************************
      * Error message tests
      *******************************************************************************/
@@ -352,6 +413,105 @@ class FileTest extends TestCase
         );
         $file->isValid();
         $this->assertCount(2, $file->getErrors());
+    }
+
+    /**
+     * Every `UPLOAD_ERR_*` code PHP defines a message for, through the public static a caller
+     * assembling a `FileList` from their own source reports a failed transfer with
+     *
+     * @dataProvider provideUploadErrorCodes
+     */
+    public function testFormatUploadFailureDescribesEveryUploadErrorCode(int $code, string $message): void
+    {
+        $this->assertSame('report.txt: ' . $message, File::formatUploadFailure('report.txt', $code));
+    }
+
+    /** @return array<string, array{0: int, 1: string}> */
+    public function provideUploadErrorCodes(): array
+    {
+        return [
+            'UPLOAD_ERR_INI_SIZE' => [
+                UPLOAD_ERR_INI_SIZE,
+                'The uploaded file exceeds the upload_max_filesize directive in php.ini',
+            ],
+            'UPLOAD_ERR_FORM_SIZE' => [
+                UPLOAD_ERR_FORM_SIZE,
+                'The uploaded file exceeds the MAX_FILE_SIZE directive that was specified in the HTML form',
+            ],
+            'UPLOAD_ERR_PARTIAL' => [UPLOAD_ERR_PARTIAL, 'The uploaded file was only partially uploaded'],
+            'UPLOAD_ERR_NO_FILE' => [UPLOAD_ERR_NO_FILE, 'No file was uploaded'],
+            'UPLOAD_ERR_NO_TMP_DIR' => [UPLOAD_ERR_NO_TMP_DIR, 'Missing a temporary folder'],
+            'UPLOAD_ERR_CANT_WRITE' => [UPLOAD_ERR_CANT_WRITE, 'Failed to write file to disk'],
+            'UPLOAD_ERR_EXTENSION' => [UPLOAD_ERR_EXTENSION, 'A PHP extension stopped the file upload'],
+        ];
+    }
+
+    /**
+     * A code with no message of its own. `UPLOAD_ERR_OK` is one of them: an entry that
+     * succeeded has no failure to describe, so it reads as unknown rather than as a success.
+     *
+     * @dataProvider provideCodesWithoutAMessage
+     */
+    public function testFormatUploadFailureFallsBackForACodeItDoesNotKnow(int $code): void
+    {
+        $this->assertSame('report.txt: Unknown Error', File::formatUploadFailure('report.txt', $code));
+    }
+
+    /** @return array<string, array{0: int}> */
+    public function provideCodesWithoutAMessage(): array
+    {
+        return [
+            'UPLOAD_ERR_OK' => [UPLOAD_ERR_OK],
+            'the code PHP skipped' => [5],
+            'a code from nowhere' => [99],
+            'a negative code' => [-1],
+        ];
+    }
+
+    /**
+     * The name in a failure string is client-supplied and callers render `getErrors()`
+     * directly, so the public static has to sanitize exactly as the `$_FILES` path does: no
+     * line break to forge a log line, no bidi override, no reserved device name.
+     *
+     * @dataProvider provideHostileClientFilenames
+     */
+    public function testFormatUploadFailureSanitizesTheClientFilename(string $name, string $expected): void
+    {
+        $this->assertSame(
+            $expected . ': No file was uploaded',
+            File::formatUploadFailure($name, UPLOAD_ERR_NO_FILE)
+        );
+    }
+
+    /** @return array<string, array{0: string, 1: string}> */
+    public function provideHostileClientFilenames(): array
+    {
+        return [
+            'control characters' => ["re\nport\x07x.txt", 're-port-x.txt'],
+            'a bidi override' => ["a\u{202E}b.txt", 'ab.txt'],
+            'a reserved device name' => ['con.txt', 'unnamed-file.txt'],
+            'a traversal attempt' => ['../../etc/passwd', 'passwd'],
+        ];
+    }
+
+    /**
+     * The two paths must not drift apart: the same failure has to read identically whichever
+     * constructor reported it, since the README encourages rendering `getErrors()` as it is.
+     */
+    public function testTheFilesPathReportsAFailureInTheSameWordsAsTheStatic(): void
+    {
+        $_FILES['hostile'] = [
+            'name' => "re\nport\x07x.txt",
+            'tmp_name' => '',
+            'error' => UPLOAD_ERR_CANT_WRITE,
+        ];
+
+        $file = new File('hostile', $this->storage);
+
+        $this->assertSame(
+            [File::formatUploadFailure("re\nport\x07x.txt", UPLOAD_ERR_CANT_WRITE)],
+            $file->getErrors()
+        );
     }
 
     /********************************************************************************

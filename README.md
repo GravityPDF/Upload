@@ -234,6 +234,189 @@ Nothing throws for a rejected file, so the `false` return is the only signal tha
 them yourself, the way the `catch` above does, or they are left with nothing referencing
 them.
 
+### Uploads from another source
+
+`File` reads `$_FILES`. `FileList` takes the files directly, so they can come from a PSR-7
+request, a worker runtime (RoadRunner, Swoole, Bref, Octane), a test harness, or an upload
+reassembled from chunks:
+
+```php
+use GravityPdf\Upload\FileList;
+
+$list = new FileList($fileInfos, $storage, $failures);
+```
+
+It extends `File`, so everything after construction is unchanged: validations, callbacks,
+`isValid()`, `upload()`, `uploadValid()`, `getUploadedLocators()`, `count()`, `foreach` and
+offsets.
+
+| Argument | |
+|---|---|
+| `array $fileInfos` | One `FileInfoInterface` per file, in a **flat** array. A nested array throws `InvalidArgumentException`, as does anything else that is not a `FileInfoInterface`. PSR-7's `getUploadedFiles()` is a tree, so flatten it first (see the bridge below). Keys are not used as offsets. |
+| `StorageInterface $storage` | As `File` takes it. |
+| `array $failures = []` | `[$clientFilename, UPLOAD_ERR_*]` pairs for files that never arrived. Each becomes a `getErrors()` entry in the same words as the `$_FILES` path, and counts as a rejection for `uploadValid()`. Keys are discarded. |
+
+`getSourceKeys()` returns the key each file arrived under, by collection offset:
+
+```php
+$list = new FileList(['avatar' => $avatarFile, 'banner' => $bannerFile], $storage);
+$list->addValidation(new FileType(['jpg', 'jpeg'], 'image/jpeg'));
+
+$keys = $list->getSourceKeys();   // ['avatar', 'banner']
+
+// An empty collection throws, as on the $_FILES path: check before uploading
+if (count($list) === 0) {
+    return $list->getErrors();
+}
+
+$list->uploadValid();
+
+foreach ($list->getUploadedLocators() as $offset => $storedPath) {
+    // $keys[$offset] is the field this file was submitted under
+}
+```
+
+`File::formatUploadFailure($clientFilename, $errorCode)` builds a `$failures` string on its
+own, for reporting failed transfers elsewhere.
+
+#### Two decisions this path needs from you
+
+On the `$_FILES` path PHP guarantees the file arrived in this request's `multipart/form-data`
+body. It checks it twice: `is_uploaded_file()` on the way in, `move_uploaded_file()` on the way
+out. That is what stops a manipulated path storing `/etc/passwd` or another user's upload as a
+file of your own. Off that path PHP cannot make the guarantee, so both ends refuse the file
+until you replace them. Until then every upload fails with `Is not an uploaded file`.
+
+**1. Say where the file came from.** Override `isUploadedFile()`, usually to check the path is
+inside a directory only your bridge writes to:
+
+```php
+class TmpUploadFile extends GravityPdf\Upload\FileInfo
+{
+    /** A tmp directory only this application writes to. Declared once: the bridge below
+        writes into it, and this check trusts nothing outside it. */
+    public const DIRECTORY = '/var/lib/myapp/uploads-tmp';
+
+    public function isUploadedFile(): bool
+    {
+        $tmp = realpath(self::DIRECTORY);           // resolve both sides, or a symlinked
+        $path = realpath($this->getPathname());     // mount never matches
+
+        return $tmp !== false && $path !== false
+            && strpos($path, $tmp . '/') === 0      // trailing /, or uploads-tmp-old passes
+            && is_file($path);
+    }
+}
+```
+
+`return true;` disables the check. Only do that where nothing outside your own code can
+influence the path.
+
+**2. Say you are willing to store it.**
+
+```php
+$storage = (new FileSystem('/path/to/uploads'))->acceptFilesNotUploadedByPhp();
+```
+
+Nothing else about the write changes: the staged write, the reservation, the extension
+deny-list, the symlink refusals and the mode all still apply. `acceptsFilesNotUploadedByPhp()`
+reads the setting back.
+
+#### A PSR-7 bridge
+
+No PSR-7 dependency is involved. This is caller code:
+
+```php
+use GravityPdf\Upload\FileList;
+use GravityPdf\Upload\StorageInterface;
+use Psr\Http\Message\StreamInterface;
+use Psr\Http\Message\UploadedFileInterface;
+
+/** @param UploadedFileInterface[] $uploadedFiles $request->getUploadedFiles()['photos'] */
+function fileListFrom(array $uploadedFiles, StorageInterface $storage, int $maxBytes): FileList
+{
+    $fileInfos = [];
+    $failures = [];
+
+    foreach ($uploadedFiles as $field => $uploadedFile) {
+        $clientFilename = (string) $uploadedFile->getClientFilename();
+
+        if ($uploadedFile->getError() !== UPLOAD_ERR_OK) {
+            $failures[] = [$clientFilename, $uploadedFile->getError()];
+            continue;
+        }
+
+        $path = TmpUploadFile::DIRECTORY . '/' . bin2hex(random_bytes(16));
+
+        if (writeTmpFile($uploadedFile->getStream(), $path, $maxBytes) === false) {
+            $failures[] = [$clientFilename, UPLOAD_ERR_INI_SIZE];
+            continue;
+        }
+
+        $fileInfos[$field] = new TmpUploadFile($path, $clientFilename);   // getSourceKeys()
+    }
+
+    return new FileList($fileInfos, $storage, $failures);
+}
+
+/** A PSR-7 body may be in memory with no path at all, so write it to a tmp file. Cap the
+    bytes as you go: Validation\Size only bounds a file that already exists. */
+function writeTmpFile(StreamInterface $stream, string $path, int $maxBytes): bool
+{
+    $out = fopen($path, 'xb');
+
+    if ($out === false) {
+        return false;
+    }
+
+    for ($written = 0; !$stream->eof(); ) {
+        $chunk = $stream->read(8192);
+        $written += strlen($chunk);
+
+        if ($written > $maxBytes || fwrite($out, $chunk) === false) {
+            fclose($out);
+            unlink($path);
+
+            return false;
+        }
+    }
+
+    fclose($out);
+
+    return true;
+}
+```
+
+`getUploadedFiles()` returns a tree, since `docs[front]` nests, and the collection is flat.
+Flatten it on the way in:
+
+```php
+$flat = new RecursiveIteratorIterator(
+    new RecursiveArrayIterator($request->getUploadedFiles(), RecursiveArrayIterator::CHILD_ARRAYS_ONLY)
+);
+
+$list = fileListFrom(iterator_to_array($flat, false), $storage, 10 * 1024 * 1024);
+```
+
+Neither argument is optional. Without `CHILD_ARRAYS_ONLY` the iterator descends into the
+`UploadedFileInterface` objects themselves and yields their properties, which for the usual
+implementation means nothing at all, because those properties are private. Without the `false`,
+keys are leaf names only, so `docs[front]` and `scans[front]` collide and one of the two files
+disappears. Build composite keys such as `docs.front` yourself if you want the field names back
+from `getSourceKeys()`.
+
+Storing a file moves it, so the tmp files behind stored uploads are gone afterwards. The ones
+behind rejected uploads are not, and nothing else will remove them:
+
+```php
+foreach ($list as $file) {
+    @unlink($file->getPathname());   // no-op for the ones storage already moved
+}
+```
+
+Never call `UploadedFileInterface::moveTo()` alongside this: the library does its own storing,
+and `moveTo()` deletes the source under a CLI SAPI.
+
 ### Lifecycle callbacks
 
 Four optional hooks fire once per file, each receiving that file's `FileInfoInterface`:
@@ -326,6 +509,11 @@ The string you return is a locator you define — a key, a URL, an identifier �
 and `File::getUploadedLocators()` hands it back unchanged, so it is what the application
 rolls back with. Never return `''`: a caller cannot tell it from a usable value.
 
+A backend of your own has no `move_uploaded_file()` in it, so nothing stops it storing a file
+PHP never received. `FileInfo::isUploadedFile()` is where that is decided: validation refuses a
+file that answers `false` whichever storage is configured. Leave the check there rather than
+reproducing it here.
+
 ```php
 use GravityPdf\Upload\FileInfoInterface;
 use GravityPdf\Upload\StorageInterface;
@@ -371,7 +559,8 @@ submitted the file what is in your upload directory. Log it and show something g
 
 **Call `isValid()` before reading metadata.** It performs the `is_uploaded_file()` check;
 the metadata accessors do not. This matters where `$_FILES` is rebuilt by something other
-than the PHP SAPI (PSR-7 bridges, test harnesses, middleware).
+than the PHP SAPI (PSR-7 bridges, test harnesses, middleware). On the `FileList` path that
+check is one you wrote, so metadata is only as trustworthy as it is.
 
 **Serve uploads from a directory the web server won't execute.** The storage defaults below
 are backstops, not a substitute for that.
@@ -435,6 +624,7 @@ Each is a separate call, so turning one off leaves the others in place:
 $storage = new \GravityPdf\Upload\Storage\FileSystem('/path/to/directory', true); // allow overwriting
 $storage->allowAnyExtension();   // store any extension, including .php
 $storage->setMode(null);         // let the process umask decide, usually world-readable
+$storage->acceptFilesNotUploadedByPhp(); // store files PHP did not receive as an upload
 
 $file->allowUnvalidatedUploads(); // store whatever is submitted, without validating it
 ```
@@ -442,6 +632,12 @@ $file->allowUnvalidatedUploads(); // store whatever is submitted, without valida
 `allowAnyExtension()` is the only way to empty the deny-list. `blockExtensions()` requires a
 non-empty list and throws otherwise, so a missing config value cannot silently disable the
 check. `getBlockedExtensions()` reports what is actually configured.
+
+`acceptFilesNotUploadedByPhp()` is the one to think hardest about, and a `$_FILES` application
+never needs it. Without it the write goes through `move_uploaded_file()`, which refuses any
+source PHP did not receive as an upload. It exists for
+[uploads from another source](#uploads-from-another-source), and belongs with an
+`isUploadedFile()` override.
 
 ## API reference
 
@@ -471,11 +667,26 @@ php.ini, and `InvalidArgumentException` when the key is not in `$_FILES`.
 | `beforeUpload(callable $callback): File` | Hook run per file before storage. |
 | `afterUpload(callable $callback): File` | Hook run per file after storage. |
 | `File::humanReadableToBytes(string $input): int` | Static helper that converts `'5M'` to `5242880`. Accepts B/K/M/G with an optional trailing `B`, and fractions like `'0.5M'`. Throws `InvalidArgumentException` on unparseable input. |
+| `File::formatUploadFailure(string $clientFilename, int $errorCode): string` | Static: the `getErrors()` string for a file that never arrived, from a client-supplied name and an `UPLOAD_ERR_*` code. Sanitizes the name as the `$_FILES` path does. For callers building a [`FileList`](#filelist) from a source of their own; a code with no message of its own reads as `Unknown Error`. |
 
 `File` also implements `Countable`, `ArrayAccess` and `IteratorAggregate` over its
 `FileInfoInterface` objects, and forwards any other method call to them: with one file the
 call returns that file's value, with several it returns an array of values, and with none it
 returns `null`.
+
+### FileList
+
+`new FileList(array $fileInfos, StorageInterface $storage, array $failures = [])` builds the
+same collection from files you supply rather than from `$_FILES`. Throws
+`InvalidArgumentException` for an entry that is not a `FileInfoInterface`, or a `$failures`
+entry that is not a `[string, int]` pair.
+
+| Method | Description |
+|---|---|
+| `getSourceKeys(): array` | The key each file arrived under, by collection offset, so `getSourceKeys()[$i]` names `$list[$i]` and `getUploadedLocators()[$i]`. Writing to an offset or unsetting one drops that key. |
+
+Both ends of the provenance check have to be answered before anything is stored; see
+[Uploads from another source](#uploads-from-another-source).
 
 ### FileInfo
 
@@ -507,6 +718,8 @@ constructor enables the deny-list and the `0640` file mode; see "Turning the def
 | `upload(FileInfoInterface $fileInfo): string` | Store the file and return its destination path. Reduces the name to a `basename()`, drops trailing dots and spaces, and rewrites the characters Windows disallows (`<` `>` `:` `"` `\|` `?` `*`) to `-`. Refuses a name starting with `.`, one carrying control or bidi characters, one Windows resolves to a device such as `CON.txt`, a blocked extension in any dot-separated component, and a symlinked destination. Writes to a staged file in the same directory and moves it into place, so no partial content is readable under the final name. With `$overwrite = false` the destination is claimed first with an empty file at the configured mode, so concurrent requests cannot both win it — a process killed mid-transfer leaves that 0-byte file behind. Throws `Exception` on any refusal. |
 | `blockExtensions(array $extensions): FileSystem` | Set the extensions that are never written, checked against the sanitized extension at the write. A leading dot is accepted and removed, and an entry containing dots is split into its components, so `tar.gz` blocks `tar` and `gz`. Throws `InvalidArgumentException` on an empty list; use `allowAnyExtension()` for that. |
 | `setMode(?int $mode): FileSystem` | Permissions applied to each stored file, default `FileSystem::DEFAULT_MODE` (`0640`). `null` leaves the mode to the process umask. |
+| `acceptFilesNotUploadedByPhp(): FileSystem` | Store files PHP did not receive as an upload, for a `FileList` fed from PSR-7, a worker runtime or reassembled chunks. Off by default: the write otherwise goes through `move_uploaded_file()`, which refuses any other source. Pair it with an `isUploadedFile()` override. |
+| `acceptsFilesNotUploadedByPhp(): bool` | Whether that was allowed. |
 | `allowAnyExtension(): FileSystem` | Turn the deny-list off. The only way to empty it. |
 | `getBlockedExtensions(): string[]` | The extensions currently refused, lowercase and one component each. Empty means the deny-list is off. |
 | `getMode(): ?int` | The permissions applied to each stored file, or `null` for the umask. |

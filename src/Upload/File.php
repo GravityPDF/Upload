@@ -72,6 +72,14 @@ use RuntimeException;
  */
 class File implements ArrayAccess, IteratorAggregate, Countable
 {
+    /** The four lifecycle hooks `applyCallback()` will fire, as the property names holding them */
+    private const LIFECYCLE_CALLBACKS = [
+        'beforeValidationCallback',
+        'afterValidationCallback',
+        'beforeUploadCallback',
+        'afterUploadCallback',
+    ];
+
     /** @var string[] Upload error code messages */
     protected static $errorCodeMessages = [
         1 => 'The uploaded file exceeds the upload_max_filesize directive in php.ini',
@@ -169,7 +177,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                 }
 
                 if ($errorCode !== UPLOAD_ERR_OK) {
-                    $this->errors[] = $this->formatUploadError($name, $errorCode);
+                    $this->errors[] = static::formatUploadFailure($name, $errorCode);
                     continue;
                 }
 
@@ -186,7 +194,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
             $this->errors[] = 'An uploaded file was sent in a format that cannot be read';
         } elseif ($_FILES[$key]['error'] !== UPLOAD_ERR_OK) {
             /* No file behind a failed upload: `tmp_name` is '' for UPLOAD_ERR_NO_FILE */
-            $this->errors[] = $this->formatUploadError(
+            $this->errors[] = static::formatUploadFailure(
                 $_FILES[$key]['name'],
                 $_FILES[$key]['error']
             );
@@ -197,22 +205,55 @@ class File implements ArrayAccess, IteratorAggregate, Countable
             );
         }
 
+        $this->init($storage);
+    }
+
+    /**
+     * The tail every constructor shares: take the storage delegate, and snapshot the errors
+     * recorded while reading the input
+     *
+     * `File` has two constructors and only one of them reads `$_FILES`, so anything added to
+     * `__construct()` would silently not hold for `FileList`. That is the drift this library
+     * already paid for once, when the two filename layers each carried their own
+     * control-character filter. **Anything every constructor has to do belongs here.**
+     *
+     * It owns the two members neither constructor should set for itself. `$objects` and
+     * `$errors` are still filled in by each constructor, since they are what reading the
+     * input produces and the two read entirely different inputs.
+     *
+     * `protected` only so `FileList::__construct()` can call it — a `private` method of this
+     * class is out of reach from a subclass's own constructor. It is not an extension seam:
+     * overriding it without snapshotting `$errors` costs `isValid()` its idempotence, since
+     * that is the list it resets to.
+     */
+    protected function init(StorageInterface $storage): void
+    {
         $this->constructorErrors = $this->errors;
         $this->storage = $storage;
     }
 
     /**
-     * Build an error string for a `$_FILES` entry that never became an upload, from the raw
-     * client-supplied `$name` and an `UPLOAD_ERR_*` code
+     * Build the error string for an entry that never became an upload, from the raw
+     * client-supplied filename and an `UPLOAD_ERR_*` code
      *
-     * Sanitizes the filename so every string in `$this->errors` carries the same guarantee:
-     * the README encourages callers to render `getErrors()` directly.
+     * Public and static so a caller assembling a `FileList` from a source of their own reports
+     * a failed transfer in exactly the words the `$_FILES` path uses, with the same sanitizing.
+     * The README encourages rendering `getErrors()` directly, so every string in it has to
+     * carry the same guarantee no matter which constructor produced it.
+     *
+     * Sanitizes through `Filename` rather than through a `FileInfo` from the factory:
+     * sanitizing an error-path filename is this library's own guarantee and must not depend on
+     * a caller-installed implementation.
+     *
+     * A code with no message of its own — `UPLOAD_ERR_OK` included, since an entry that
+     * succeeded has no failure to report — reads as `Unknown Error`, as it does on the
+     * `$_FILES` path.
      */
-    private function formatUploadError(string $name, int $errorCode): string
+    public static function formatUploadFailure(string $clientFilename, int $errorCode): string
     {
         return sprintf(
             '%s: %s',
-            Filename::sanitizeNameWithExtension($name),
+            Filename::sanitizeNameWithExtension($clientFilename),
             static::$errorCodeMessages[$errorCode] ?? 'Unknown Error'
         );
     }
@@ -648,13 +689,18 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                     'Is not an uploaded file'
                 );
             } else {
-                /* Hoisted: sanitizing is several regex passes, and every failure reuses it */
-                $sanitizedFilename = $this->getSanitizedFilename($fileInfo);
+                /* Sanitizing is several regex passes and only an error string reads the
+                   result, so it is taken on the first failure and reused by the rest rather
+                   than hoisted: a file that passes every validation — the ordinary case —
+                   never pays for it. Taken from the file as it is when it first fails, which
+                   is the name the rest of that file's messages then carry. */
+                $sanitizedFilename = null;
 
                 foreach ($this->validations as $validation) {
                     try {
                         $validation->validate($fileInfo);
                     } catch (Exception $e) {
+                        $sanitizedFilename = $sanitizedFilename ?? $this->getSanitizedFilename($fileInfo);
                         $this->errors[] = sprintf('%s: %s', $sanitizedFilename, $e->getMessage());
                     } catch (LogicException $e) {
                         /* By PHP's own definition a bug in the program, not a failed file.
@@ -667,6 +713,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                            throwable carries reaches this string — a runtime message can hold an
                            absolute path, a class name is internal structure, and getErrors() is
                            shown to end users. Rethrow an Upload\Exception to surface either. */
+                        $sanitizedFilename = $sanitizedFilename ?? $this->getSanitizedFilename($fileInfo);
                         $this->errors[] = sprintf('%s: Validation could not be completed', $sanitizedFilename);
                     }
                 }
@@ -682,16 +729,17 @@ class File implements ArrayAccess, IteratorAggregate, Countable
         return $valid;
     }
 
+    /**
+     * Fire one of the four lifecycle hooks, if the caller installed it
+     *
+     * `$callbackName` names a property to read, so it is checked against
+     * `LIFECYCLE_CALLBACKS` rather than trusted: this method is `protected`, and a subclass
+     * passing a name of its own would otherwise reach any property on the object and try to
+     * call it. A constant, not a literal rebuilt on each of the four calls per file.
+     */
     protected function applyCallback(string $callbackName, FileInfoInterface $file): void
     {
-        $allowedCallbackName = [
-            'beforeValidationCallback',
-            'afterValidationCallback',
-            'beforeUploadCallback',
-            'afterUploadCallback'
-        ];
-
-        if (!in_array($callbackName, $allowedCallbackName, true)) {
+        if (!in_array($callbackName, self::LIFECYCLE_CALLBACKS, true)) {
             return;
         }
 
