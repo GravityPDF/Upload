@@ -558,9 +558,10 @@ $file->setName(bin2hex(random_bytes(16)));   // keep the client name as display 
 output and use parameterized queries. This applies to `getErrors()`.
 
 **Show `getErrors()`, log the exception.** Every string in `getErrors()` is sanitized and
-describes the submitted file. A storage exception message is not: it distinguishes a name
-that already exists from a destination that could not be created, which tells whoever
-submitted the file what is in your upload directory. Log it and show something generic.
+describes the submitted file. A storage exception message is sanitized too, but it is not
+written for the person who uploaded: it distinguishes a name that already exists from a
+destination that could not be created, which tells whoever submitted the file what is in
+your upload directory. Log it and show something generic.
 
 **Call `isValid()` before reading metadata.** It performs the `is_uploaded_file()` check;
 the metadata accessors do not. This matters where `$_FILES` is rebuilt by something other

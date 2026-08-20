@@ -236,7 +236,9 @@ Each of these is listed in full in the [changelog](CHANGELOG.md).
   into a `ValidationInterface`**, which both entry points honour.
 * **The storage collision message changed.** `'File already exists'` is now
   `'A file named "report.txt" already exists'`, since sanitizing is many-to-one and the old
-  wording couldn't say which name collided. **Update anything matching the old string.** Log
+  wording couldn't say which name collided. The name is sanitized for display first, and a
+  name left with nothing by that reports `'A file with that name already exists'`, so there
+  are two wordings to match rather than one. **Update anything matching the old string.** Log
   storage messages rather than showing them to whoever submitted the file: the wording
   distinguishes a name that exists from a destination that couldn't be created, which is an
   existence check on your upload directory. `getErrors()` is the list written to be rendered.

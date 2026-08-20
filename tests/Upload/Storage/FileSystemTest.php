@@ -604,6 +604,40 @@ class FileSystemTest extends TestCase
     }
 
     /**
+     * `resolveFilename()` is the naming seam, so the name this message quotes is a subclass's
+     * to choose: the base class refuses control and bidi characters in one, and an override is
+     * free not to. A storage exception is written to a log, which is the thing a control
+     * character forges a line in and a bidi control reorders.
+     *
+     * @dataProvider providerNamesAnOverriddenSeamMayReturn
+     */
+    public function testCollisionMessageSanitizesWhatTheSeamReturned(string $name, string $message): void
+    {
+        $workingDirectory = $this->makeWorkingDirectory();
+        $storage = $this->makeUnsanitizingStorage($workingDirectory);
+
+        $storage->upload($this->makeHostileFileInfo($name));
+
+        $this->expectException(Exception::class);
+        $this->expectExceptionMessage($message);
+
+        /* The same name again, so the reservation finds the first one in the way */
+        $storage->upload($this->makeHostileFileInfo($name));
+    }
+
+    /**
+     * @return array<string, array<int, string>>
+     */
+    public function providerNamesAnOverriddenSeamMayReturn(): array
+    {
+        return [
+            'controls collapsed' => ["report\x07\x08.txt", 'A file named "report .txt" already exists'],
+            'bidi deleted' => ["resume\xE2\x80\xAEtxt.gpj", 'A file named "resumetxt.gpj" already exists'],
+            'nothing but controls' => ["\x01\x02", 'A file with that name already exists'],
+        ];
+    }
+
+    /**
      * The rewrite runs before the deny-list, so hiding a blocked extension behind one of these
      * does not carry it past the check.
      */
@@ -1053,6 +1087,27 @@ class FileSystemTest extends TestCase
         return $fileInfo;
     }
 
+    /**
+     * Storage whose naming seam hands back whatever it was given, standing in for a subclass
+     * that replaced `resolveFilename()` and did none of its sanitizing. The two tests using it
+     * cover what `upload()` still owes against such an override: the refusals it applies, and
+     * the name it is willing to quote back.
+     */
+    protected function makeUnsanitizingStorage(string $directory): FileSystem
+    {
+        return new class ($directory) extends FileSystem {
+            protected function resolveFilename(FileInfoInterface $fileInfo): string
+            {
+                return $fileInfo->getNameWithExtension();
+            }
+
+            protected function moveUploadedFile(string $source, string $destination): bool
+            {
+                return copy($source, $destination);
+            }
+        };
+    }
+
     /** Storage told to accept files PHP did not receive, which six tests here need */
     protected function makeAcceptingStorage(string $directory, bool $overwrite = false): FileSystem
     {
@@ -1068,17 +1123,7 @@ class FileSystemTest extends TestCase
     {
         $workingDirectory = $this->makeWorkingDirectory();
 
-        $storage = new class ($workingDirectory) extends FileSystem {
-            protected function resolveFilename(FileInfoInterface $fileInfo): string
-            {
-                return basename($fileInfo->getNameWithExtension());
-            }
-
-            protected function moveUploadedFile(string $source, string $destination): bool
-            {
-                return copy($source, $destination);
-            }
-        };
+        $storage = $this->makeUnsanitizingStorage($workingDirectory);
 
         try {
             $storage->upload($this->makeHostileFileInfo('shell.php'));
