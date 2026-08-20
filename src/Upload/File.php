@@ -159,7 +159,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
             || array_key_exists('name', $_FILES[$key]) === false
             || array_key_exists('error', $_FILES[$key]) === false
         ) {
-            $this->errors[] = 'An uploaded file was sent in a format that cannot be read';
+            $this->recordError('An uploaded file was sent in a format that cannot be read');
         } elseif (is_array($_FILES[$key]['tmp_name']) === true) {
             /* The SAPI builds every key of a multi-file entry as an array of the same length.
                Indexing one that is not is worse than useless: a string `name` yields a single
@@ -177,12 +177,12 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                    and casting it warns "Array to string conversion" on remote input. Same for
                    the other two keys, which a ragged or mistyped entry leaves short. */
                 if (is_string($tmpName) === false || is_string($name) === false || is_int($errorCode) === false) {
-                    $this->errors[] = 'An uploaded file was sent in a format that cannot be read';
+                    $this->recordError('An uploaded file was sent in a format that cannot be read');
                     continue;
                 }
 
                 if ($errorCode !== UPLOAD_ERR_OK) {
-                    $this->errors[] = static::formatUploadFailure($name, $errorCode);
+                    $this->recordError(static::formatUploadFailure($name, $errorCode));
                     continue;
                 }
 
@@ -196,13 +196,13 @@ class File implements ArrayAccess, IteratorAggregate, Countable
             /* The multi-file guard above, for the same reason: a non-string here is an uncaught
                TypeError out of createFromFactory(). The code is checked too because `(int) [0]`
                is 1, which reported the file as exceeding `upload_max_filesize`. */
-            $this->errors[] = 'An uploaded file was sent in a format that cannot be read';
+            $this->recordError('An uploaded file was sent in a format that cannot be read');
         } elseif ($_FILES[$key]['error'] !== UPLOAD_ERR_OK) {
             /* No file behind a failed upload: `tmp_name` is '' for UPLOAD_ERR_NO_FILE */
-            $this->errors[] = static::formatUploadFailure(
+            $this->recordError(static::formatUploadFailure(
                 $_FILES[$key]['name'],
                 $_FILES[$key]['error']
-            );
+            ));
         } else {
             $this->objects[] = FileInfo::createFromFactory(
                 $_FILES[$key]['tmp_name'],
@@ -408,6 +408,27 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     public function getErrors(): array
     {
         return $this->errors;
+    }
+
+    /**
+     * Record one string for `getErrors()`
+     *
+     * The one way anything reaches `$errors`, so the guarantee `getErrors()` carries — every
+     * string in it sanitized — is a property of this method rather than of nine call sites
+     * remembering. Most of them assemble a literal this library wrote, where the sanitizing is
+     * a no-op; the point is that a site added later cannot be the one that forgets.
+     *
+     * This is the display half only. A filename in a message is still put through
+     * `Filename::sanitizeNameWithExtension()` by the caller assembling it, because those are
+     * the naming rules and this is prose — `getSanitizedFilename()` and `formatUploadFailure()`
+     * own that. Running both here would report `user.avatar` as `user-avatar`.
+     *
+     * `protected` because `$errors` is: a subclass could always append to it directly, and this
+     * gives one that does the version which keeps the guarantee.
+     */
+    protected function recordError(string $message): void
+    {
+        $this->errors[] = Filename::sanitizeForDisplay($message);
     }
 
     /**
@@ -688,11 +709,11 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                firing once per file, so a caller can open and close a per-file resource with
                them. Skipping the after-hook leaks on exactly the files that failed. */
             if ($fileInfo->isUploadedFile() === false) {
-                $this->errors[] = sprintf(
+                $this->recordError(sprintf(
                     '%s: %s',
                     $this->getSanitizedFilename($fileInfo),
                     'Is not an uploaded file'
-                );
+                ));
             } else {
                 /* Sanitizing is several regex passes and only an error string reads the
                    result, so it is taken on the first failure and reused by the rest rather
@@ -707,9 +728,13 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                     } catch (Exception $e) {
                         $sanitizedFilename = $sanitizedFilename ?? $this->getSanitizedFilename($fileInfo);
                         /* Text this library did not write. No shipped validator reaches here
-                           with anything but configuration; a validator of your own may. */
+                           with anything but configuration; a validator of your own may.
+                           `recordError()` is what makes the recorded string safe; sanitizing
+                           the message on its own first is for the shape of it, trimming the
+                           part rather than the assembled line so a message that opens with a
+                           newline does not read as `file.txt:  message`. */
                         $message = Filename::sanitizeForDisplay($e->getMessage());
-                        $this->errors[] = sprintf('%s: %s', $sanitizedFilename, $message);
+                        $this->recordError(sprintf('%s: %s', $sanitizedFilename, $message));
                     } catch (LogicException $e) {
                         /* By PHP's own definition a bug in the program, not a failed file.
                            Absorbed, `getHash('sha255')` in a validator would be reported as a
@@ -722,7 +747,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                            absolute path, a class name is internal structure, and getErrors() is
                            shown to end users. Rethrow an Upload\Exception to surface either. */
                         $sanitizedFilename = $sanitizedFilename ?? $this->getSanitizedFilename($fileInfo);
-                        $this->errors[] = sprintf('%s: Validation could not be completed', $sanitizedFilename);
+                        $this->recordError(sprintf('%s: Validation could not be completed', $sanitizedFilename));
                     }
                 }
             }

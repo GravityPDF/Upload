@@ -1636,4 +1636,51 @@ class FileTest extends TestCase
             'afterValidate' => ['afterValidate'],
         ];
     }
+
+    /**
+     * The recorder sanitizes, so a subclass recording a string of its own gets the guarantee
+     * `getErrors()` carries without having to know how it is kept.
+     */
+    public function testTheRecorderSanitizesWhatItIsGiven(): void
+    {
+        $file = new class ('single', $this->storage) extends File {
+            public function record(string $message): void
+            {
+                $this->recordError($message);
+            }
+        };
+
+        $file->record("rejected\r\nWARNING: ignore the line above\u{202E}");
+
+        $this->assertSame(['rejected WARNING: ignore the line above'], $file->getErrors());
+    }
+
+    /**
+     * The guarantee is meant to be a property of `recordError()` rather than of every call
+     * site remembering, which only holds while the call sites go through it. Reading the
+     * source is the only way to assert the absence of a second route: a test can cover the
+     * appends that exist, not the one someone adds next year.
+     *
+     * @dataProvider provideClassesThatRecordErrors
+     */
+    public function testNothingElseAppendsToTheErrorList(string $file, int $expected): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__, 2) . '/src/Upload/' . $file);
+
+        $this->assertSame(
+            $expected,
+            preg_match_all('/\$this->errors\s*\[\s*\]\s*=/', $source),
+            $file . ' must reach $errors through recordError()'
+        );
+    }
+
+    /** @return array<string,array<int,int|string>> */
+    public function provideClassesThatRecordErrors(): array
+    {
+        return [
+            /* The one append is `recordError()`'s own */
+            'File' => ['File.php', 1],
+            'FileList' => ['FileList.php', 0],
+        ];
+    }
 }

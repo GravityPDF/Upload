@@ -128,7 +128,7 @@ class FileList extends File
                 );
             }
 
-            $this->errors[] = static::formatUploadFailure($failure[0], $failure[1]);
+            $this->recordError(static::formatUploadFailure($failure[0], $failure[1]));
         }
 
         /* The tail `File::__construct()` also runs, so an invariant added there holds here */
