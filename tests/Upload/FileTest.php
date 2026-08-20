@@ -67,26 +67,50 @@ class FileTest extends TestCase
     }
 
     /**
+     * Install a `FileInfo` factory building a mock with `$methods` doubled
+     *
+     * `FileInfo::__construct` is `final`, so a test cannot subclass it for construction; the
+     * factory is how `File` is given a double at all. Every stub below wants the same mock
+     * with a different set of methods answered, so the building is here and the answering is
+     * the caller's — `$configure` receives each new mock and the client name it was built
+     * for, which is what a per-file answer keys on.
+     *
+     * The factory is process-wide state; `tear_down()` calls `resetFactory()`.
+     *
+     * @param string[] $methods
+     * @param callable(FileInfo&MockObject, string): void $configure
+     */
+    protected function stubFileInfoFactory(array $methods, callable $configure): void
+    {
+        FileInfo::setFactory(function ($tmpName, $name) use ($methods, $configure) {
+            $fileInfo = $this->getMockBuilder(FileInfo::class)
+                ->setConstructorArgs([$tmpName, $name])
+                ->onlyMethods($methods)
+                ->getMock();
+
+            $configure($fileInfo, (string) $name);
+
+            return $fileInfo;
+        });
+    }
+
+    /**
      * Install a `FileInfo` factory whose `isUploadedFile()` answers `$result`
      *
      * `is_uploaded_file()` is false for anything a test writes itself, so every test needs the
-     * double. `tear_down()` calls `resetFactory()`, since the factory is process-wide.
+     * double.
      *
      * @param bool $result
      * @return void
      */
     protected function stubUploadedFileCheck(bool $result): void
     {
-        FileInfo::setFactory(function ($tmpName, $name) use ($result) {
-            $fileInfo = $this->getMockBuilder(FileInfo::class)
-                ->setConstructorArgs([$tmpName, $name])
-                ->onlyMethods(['isUploadedFile'])
-                ->getMock();
-
-            $fileInfo->method('isUploadedFile')->willReturn($result);
-
-            return $fileInfo;
-        });
+        $this->stubFileInfoFactory(
+            ['isUploadedFile'],
+            static function (FileInfo $fileInfo) use ($result): void {
+                $fileInfo->method('isUploadedFile')->willReturn($result);
+            }
+        );
     }
 
     /**
@@ -99,23 +123,19 @@ class FileTest extends TestCase
      */
     protected function stubNameReadCounter(int &$sanitized): void
     {
-        FileInfo::setFactory(function ($tmpName, $name) use (&$sanitized) {
-            $fileInfo = $this->getMockBuilder(FileInfo::class)
-                ->setConstructorArgs([$tmpName, $name])
-                ->onlyMethods(['isUploadedFile', 'getNameWithExtension'])
-                ->getMock();
+        $this->stubFileInfoFactory(
+            ['isUploadedFile', 'getNameWithExtension'],
+            static function (FileInfo $fileInfo, string $name) use (&$sanitized): void {
+                $fileInfo->method('isUploadedFile')->willReturn(true);
+                $fileInfo->method('getNameWithExtension')->willReturnCallback(
+                    static function () use (&$sanitized, $name): string {
+                        $sanitized++;
 
-            $fileInfo->method('isUploadedFile')->willReturn(true);
-            $fileInfo->method('getNameWithExtension')->willReturnCallback(
-                static function () use (&$sanitized, $name): string {
-                    $sanitized++;
-
-                    return (string) $name;
-                }
-            );
-
-            return $fileInfo;
-        });
+                        return $name;
+                    }
+                );
+            }
+        );
     }
 
     /* phpcs:ignore */
@@ -376,19 +396,15 @@ class FileTest extends TestCase
      */
     public function testNameFromACustomFileInfoIsSanitizedBeforeReachingGetErrors(): void
     {
-        FileInfo::setFactory(function ($tmpName, $name) {
-            $fileInfo = $this->getMockBuilder(FileInfo::class)
-                ->setConstructorArgs([$tmpName, $name])
-                ->onlyMethods(['isUploadedFile', 'getNameWithExtension'])
-                ->getMock();
-
-            $fileInfo->method('isUploadedFile')->willReturn(false);
-            $fileInfo
-                ->method('getNameWithExtension')
-                ->willReturn("report\n2024-01-01 INFO all clear.txt");
-
-            return $fileInfo;
-        });
+        $this->stubFileInfoFactory(
+            ['isUploadedFile', 'getNameWithExtension'],
+            static function (FileInfo $fileInfo): void {
+                $fileInfo->method('isUploadedFile')->willReturn(false);
+                $fileInfo
+                    ->method('getNameWithExtension')
+                    ->willReturn("report\n2024-01-01 INFO all clear.txt");
+            }
+        );
 
         $file = new File('single', $this->storage);
         $file->addValidation(new Mimetype(['text/plain']));
@@ -1226,16 +1242,12 @@ class FileTest extends TestCase
      */
     protected function stubUploadedFileCheckByName(array $failing): void
     {
-        FileInfo::setFactory(function ($tmpName, $name) use ($failing) {
-            $fileInfo = $this->getMockBuilder(FileInfo::class)
-                ->setConstructorArgs([$tmpName, $name])
-                ->onlyMethods(['isUploadedFile'])
-                ->getMock();
-
-            $fileInfo->method('isUploadedFile')->willReturn(in_array($name, $failing, true) === false);
-
-            return $fileInfo;
-        });
+        $this->stubFileInfoFactory(
+            ['isUploadedFile'],
+            static function (FileInfo $fileInfo, string $name) use ($failing): void {
+                $fileInfo->method('isUploadedFile')->willReturn(in_array($name, $failing, true) === false);
+            }
+        );
     }
 
     /**
