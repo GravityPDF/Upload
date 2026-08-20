@@ -56,13 +56,16 @@ To keep a blocked extension:
 ```php
 use GravityPdf\Upload\Storage\FileSystem;
 
-// Drop one entry
+// Drop the entries you need, keeping the rest of the list
 $storage->blockExtensions(
     array_diff(FileSystem::getDefaultBlockedExtensions(), ['config'])
 );
 
-// Accept markup such as SVG and HTML, and sanitize the contents yourself
-$storage->blockExtensions(FileSystem::EXECUTABLE_EXTENSIONS);
+// Accepting SVG means dropping two entries, not the whole markup group.
+// Sanitize the contents yourself
+$storage->blockExtensions(
+    array_diff(FileSystem::getDefaultBlockedExtensions(), ['svg', 'svgz'])
+);
 
 // Or restore the 3.x behaviour of writing any extension
 $storage->allowAnyExtension();
