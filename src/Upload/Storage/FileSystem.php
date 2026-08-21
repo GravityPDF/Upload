@@ -57,8 +57,12 @@ class FileSystem implements StorageInterface
     /**
      * Extensions a web server is commonly configured to execute or read as configuration
      *
-     * Also covers client-side binary formats. The list is not exhaustive; an allow-list via
-     * `\GravityPdf\Upload\Validation\FileType` is the primary control.
+     * Also covers client-side binary formats. `asis` runs nothing, but Apache's `mod_asis`
+     * serves the file as a complete HTTP response, so its own `Content-Type` and `Location`
+     * headers are whatever the uploader wrote.
+     *
+     * The list is not exhaustive; an allow-list via `\GravityPdf\Upload\Validation\FileType`
+     * is the primary control.
      *
      * @var string[]
      */
@@ -66,9 +70,12 @@ class FileSystem implements StorageInterface
         'php', 'php2', 'php3', 'php4', 'php5', 'php6', 'php7', 'php8', 'phps', 'phtml', 'phtm',
         'phar', 'pht', 'inc',
         'shtml', 'shtm', 'stm',
-        'cgi', 'fcgi', 'pl', 'py', 'rb', 'sh', 'bash', 'ps1',
+        'asis',
+        'cgi', 'fcgi', 'pl', 'py', 'rb', 'sh', 'bash', 'ps1', 'erb', 'rhtml',
         'jsp', 'jspx', 'jspf', 'jsw', 'jsv', 'jshtml', 'jar', 'war',
         'asp', 'aspx', 'asa', 'asax', 'ascx', 'ashx', 'asmx', 'cer', 'cshtml', 'vbhtml',
+        'htr', 'idc', 'printer',
+        'cfm', 'cfml', 'cfc',
         'exe', 'dll', 'com', 'bat', 'cmd', 'msi', 'scr', 'vbs', 'ws', 'wsf', 'hta',
         'htaccess', 'htpasswd', 'ini', 'conf', 'config',
     ];
@@ -593,10 +600,8 @@ class FileSystem implements StorageInterface
      * deletes exactly this set, so only an implementation of your own arrives here with one.
      * Keep the two in step.
      *
-     * A leading dot is refused here rather than left to the deny-list, which does not see one:
-     * `Filename::extensionComponents()` drops the empty component before the dot along with the
-     * first real one, so `.htaccess` presents no extension to match and `.env` is not on the
-     * list in the first place.
+     * A leading dot is refused here rather than left to the deny-list, which is a list of
+     * extensions and so does not cover `.env` at all.
      *
      * @throws Exception If the name is not one that may be written
      */
@@ -644,8 +649,6 @@ class FileSystem implements StorageInterface
         $components = Filename::extensionComponents($filename);
 
         foreach ($components as $component) {
-            $component = trim($component);
-
             if (in_array($component, $this->blockedExtensions, true)) {
                 throw new Exception(
                     'Files with the extension "%1$s" cannot be stored',

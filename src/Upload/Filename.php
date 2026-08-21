@@ -66,6 +66,14 @@ final class Filename
     public const MAX_EXTENSION_LENGTH = 32;
 
     /**
+     * The longest string `sanitizeForDisplay()` will return, in bytes
+     *
+     * Not `MAX_LENGTH`: this bounds prose rather than a name, and a message naming a long
+     * allow-list back to the developer is a legitimate one that 255 bytes would cut.
+     */
+    public const MAX_DISPLAY_LENGTH = 2048;
+
+    /**
      * What a name is called when sanitizing leaves nothing of it
      */
     public const FALLBACK = 'unnamed-file';
@@ -151,13 +159,20 @@ final class Filename
      * The other flavour of sanitizing. `sanitizeName()` and friends answer to what a *filename*
      * may be — a byte budget, device names, `%` and `/` rewritten — which would turn
      * `Must be one of: image/png` into `Must be one of- image-png`. So controls collapse to a
-     * space rather than `-`, nothing bounds the length, and UTF-8 is forced for the reason
-     * `finalize()` forces it, needing `ext-mbstring` the same way.
+     * space rather than `-`, the length is bounded by `MAX_DISPLAY_LENGTH` rather than by a
+     * filename's budget, and UTF-8 is forced for the reason `finalize()` forces it, needing
+     * `ext-mbstring` the same way.
+     *
+     * @param int $maxLength A tighter bound than `MAX_DISPLAY_LENGTH`, for a caller whose
+     *                       string is not prose.
      */
-    public static function sanitizeForDisplay(string $value): string
+    public static function sanitizeForDisplay(string $value, int $maxLength = self::MAX_DISPLAY_LENGTH): string
     {
         $value = (string) preg_replace('/' . self::BIDI_CONTROLS . '/', '', $value);
         $value = (string) preg_replace('/(?:' . self::CONTROL_CHARACTERS . ')+/', ' ', $value);
+
+        /* Cut before the repair below, so a sequence this splits is dropped rather than kept */
+        $value = (string) substr($value, 0, $maxLength);
 
         return trim(self::forceValidUtf8($value));
     }
@@ -339,11 +354,19 @@ final class Filename
      * not necessarily read the name the way `pathinfo()` does — Apache's `AddHandler` matches
      * any dot component, so `evil.php.jpg` is served as PHP where `.php` is mapped.
      *
+     * The split is bounded, so the first field is dropped whatever it holds —
+     * `deviceComponent()` splits the same boundary and takes the field this one discards.
+     * Normalizing first would drop a field that is nothing but spaces, leaving the extension
+     * as the only field for the drop to take: `" .php"` normalized to `['php']`, and what
+     * reached the deny-list was `[]`.
+     *
      * @return string[]
      */
     public static function extensionComponents(string $filename): array
     {
-        return array_slice(self::normalizeComponents($filename), 1);
+        $parts = explode('.', $filename, 2);
+
+        return isset($parts[1]) ? self::normalizeComponents($parts[1]) : [];
     }
 
     /**
@@ -393,12 +416,26 @@ final class Filename
             return $name;
         }
 
+        /* `symfony/polyfill-mbstring` converts through `iconv()`, which answers `false` for a
+           sequence the end of the string cuts short rather than dropping it and keeping the
+           rest — so a client name ending mid-character came back as `unnamed-file`, and a byte
+           cut made one out of a name that arrived whole.
+
+           Only an incomplete tail matches: a lead byte carrying fewer continuations than it
+           calls for, at the end of the string. The lookbehind is what keeps that linear; a run
+           of lead bytes otherwise retries the match at every offset, which is quadratic. */
+        $name = (string) preg_replace(
+            '/(?<![\xC2-\xF4])'
+            . '(?:[\xC2-\xDF]|[\xE0-\xEF][\x80-\xBF]?|[\xF0-\xF4][\x80-\xBF]{0,2})++$/D',
+            '',
+            $name
+        );
+
         /* 'none' drops the offending bytes instead of replacing them with a substitute char */
         $substitute = mb_substitute_character();
         mb_substitute_character('none');
-        /* Silenced for `symfony/polyfill-mbstring`, which implements this over `iconv()` and
-           warns on exactly the input this repairs. Same result as the extension, only noisier,
-           and a client-supplied name must not raise a warning. */
+        /* Silenced because the polyfill warns on exactly the input this repairs, and a
+           client-supplied name must not raise a warning. */
         $name = (string)@mb_convert_encoding($name, 'UTF-8', 'UTF-8');
         mb_substitute_character($substitute);
 

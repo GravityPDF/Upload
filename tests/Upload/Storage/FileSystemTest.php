@@ -6,6 +6,7 @@ use InvalidArgumentException;
 use GravityPdf\Upload\Exception;
 use GravityPdf\Upload\FileInfo;
 use GravityPdf\Upload\FileInfoInterface;
+use GravityPdf\Upload\UnicodeSpaces;
 use Yoast\PHPUnitPolyfills\TestCases\TestCase;
 
 class FileSystemTest extends TestCase
@@ -541,7 +542,61 @@ class FileSystemTest extends TestCase
             'inner extension' => ['evil.php.jpg'],
             'inner extension among several' => ['evil.php.tar.gz'],
             'inner extension with padding' => ['evil.php .jpg'],
+
+            /* A name that is empty once trimmed still has an extension to match */
+            'name is only spaces' => [' .php'],
         ];
+    }
+
+    /**
+     * The deny-list is matched one dot-separated component at a time, and each is trimmed —
+     * `trim()`, so of ASCII whitespace. A space that is not `U+0020` is part of the component
+     * rather than padding around it, so `php` is still `php` beside one and still refused.
+     *
+     * @dataProvider providerUnicodeSpaces
+     */
+    public function testAUnicodeSpaceDoesNotHideABlockedExtension(string $space): void
+    {
+        foreach ([$space . '.php', 'evil' . $space . '.php'] as $name) {
+            try {
+                $this->makeStorage($this->makeWorkingDirectory(), true)
+                    ->upload($this->makeHostileFileInfo($name));
+                $this->fail(sprintf('%s was stored', bin2hex($name)));
+            } catch (Exception $e) {
+                $this->assertSame('Files with the extension "php" cannot be stored', $e->getMessage());
+            }
+        }
+    }
+
+    /**
+     * The other side of the same rule. A space that is not `U+0020` is not taken off the end of
+     * a name either — `resolveFilename()` rtrims `" ."`, which is what Windows resolves away —
+     * so `evil.php\u{00A0}` is written under a name that is not `evil.php`, and nothing maps it
+     * to the interpreter. Stored rather than refused, and the assertion is on the name: refusing
+     * would mean inventing a rule no file system applies.
+     *
+     * @dataProvider providerUnicodeSpaces
+     */
+    public function testAUnicodeSpaceIsKeptInAStoredName(string $space): void
+    {
+        $workingDirectory = $this->makeWorkingDirectory();
+        $storage = $this->makeStorage($workingDirectory, true);
+
+        foreach (['evil.php' . $space, 'evil.' . $space . 'php', $space . 'con.txt'] as $name) {
+            $this->assertSame(
+                $workingDirectory . '/' . $name,
+                $storage->upload($this->makeHostileFileInfo($name)),
+                bin2hex($name)
+            );
+        }
+    }
+
+    /**
+     * @return array<string, array<int, string>>
+     */
+    public function providerUnicodeSpaces(): array
+    {
+        return UnicodeSpaces::providerRows();
     }
 
     /**
@@ -1145,10 +1200,8 @@ class FileSystemTest extends TestCase
     /**
      * The same hoist, for the refusals that decide whether a name is a usable, visible file.
      * They sat in `resolveFilename()` too, so `return basename($fileInfo->getNameWithExtension())`
-     * — the obvious override to write — stored every one of these. `.htaccess` is the loud one:
-     * the deny-list carries `htaccess`, but `extensionComponents()` drops the empty component
-     * before a leading dot along with the first real one, so a dotfile presents no extension to
-     * match and an upload directory gets a file that can turn execution back on.
+     * — the obvious override to write — stored every one of these. `.env` is the loud one: the
+     * deny-list is a list of extensions and carries nothing that matches it.
      *
      * @dataProvider providerNamesUploadRefusesWhateverTheSeamSays
      */
@@ -1172,6 +1225,9 @@ class FileSystemTest extends TestCase
             'dotfile' => ['.env'],
             'control character' => ["report\x07.txt"],
             'bidi override' => ["resume\xE2\x80\xAEtxt.gpj"],
+            /* A space, but a zero-width one, so it is in BIDI_CONTROLS rather than in
+               UnicodeSpaces: it has no width to see it by */
+            'zero width space' => ["evil\u{200B}.txt"],
             'this directory' => ['.'],
             'parent directory' => ['..'],
             'nothing at all' => [''],
