@@ -572,9 +572,8 @@ own equivalents.
 
 ## Translating error messages
 
-No translations ship with this library, and none are needed to use it: with no translator
-installed every message is the English string it has always been. Install one and the
-messages `getErrors()` returns are looked up through it.
+No translations ship, and you do not need any: with no translator installed, every message is
+the English string it has always been. Install one and `getErrors()` is looked up through it.
 
 ```php
 use GravityPdf\Upload\Translation;
@@ -584,178 +583,96 @@ Translation::setTranslator(static function (string $text, string $domain): strin
 });
 ```
 
-The English source string **is** the message id, which is also the gettext msgid, so a lookup
-that finds nothing returns what this library would have said anyway. The translator receives
-the string and the library's text domain and nothing else: values are interpolated on this side
-of the seam, after the lookup, so a filename or a configured limit containing `%` can never be
-read as a `printf` conversion. Register it once, wherever you bootstrap. It is consulted when a
-message is rendered, so a translator that reads the current locale still answers correctly
-after a mid-request switch.
+The English string **is** the message id — the gettext msgid — so there is nothing to map, and
+a lookup that finds nothing returns what the library would have said anyway.
 
-In the source, each translatable string is marked rather than translated where it is written —
-gettext's `N_()` idiom, under a more familiar name:
+Your callable gets the string and the text domain. It never gets the values that go into the
+string; those are interpolated afterwards, so a filename containing `%` cannot be read as a
+`printf` conversion. Register it once at bootstrap. It runs when a message is rendered, so a
+locale switched mid-request still gives the right answer.
+
+In the source each string is marked, not translated:
 
 ```php
+use GravityPdf\Upload\ErrorCode;
+use GravityPdf\Upload\Exception;
+
+use function GravityPdf\Upload\__;
+
 throw new Exception(
-    /* translators: %1$s: the largest accepted size, in bytes */
+    /* translators: %1$s: the largest accepted size, in megabytes */
     __('File size is too large. Must be no more than %1$s MB'),
     $fileInfo,
     ErrorCode::SIZE_TOO_LARGE,
-    [$this->maxSize]
+    [$amount]
 );
 ```
 
-`__()` returns its argument: it marks the string for an extractor and nothing more, domain
-included. Keeping the lookup at one chokepoint is what lets `Exception::getMessage()` stay
-English for your log, keeps the untranslated msgid in `getErrorDetails()`, and means the locale
-that matters is the one in force when the message is read rather than when the file was
-rejected.
+`__()` just returns its argument. Looking up in one place is what keeps
+`Exception::getMessage()` in English for your log, keeps the raw msgid in `getErrorDetails()`,
+and uses the locale in force when the message is read rather than when the file was rejected.
 
-A broken catalogue cannot break an upload. A translator that throws, returns a non-string, or —
-where there are values to fill — returns a template whose placeholders do not match the
-source's is ignored in favour of the English. A message with no values is handed back whole
-whatever the catalogue says, since there is no interpolation for a mismatch to spoil.
+A broken catalogue cannot break an upload. If your translator throws, returns something other
+than a string, or returns a template whose placeholders do not match the original, the English
+is used instead.
 
 ### What is translated, and what is not
 
-`getErrors()` — the list the README tells you to render — and nothing else. In particular
-`Exception::getMessage()` is always English, including the messages `Storage\FileSystem`
-throws. Those name the destination and exist for your log; showing one to whoever submitted
-the file [hands them an existence oracle for the upload directory](#security-notes). An
-exception is also what you search a log for, which it stops being once translated. To show one
-in the end user's language, render it from `getMessageId()` and `getMessageArgs()`.
+`getErrors()`, and nothing else.
+
+`Exception::getMessage()` is always English. That includes everything `Storage\FileSystem`
+throws: those messages name the destination, so showing one to whoever submitted the file
+[tells them what is in your upload directory](#security-notes). They are for your log, and a
+log is easier to search when the text does not change with the locale.
+
+To show an exception's message to an end user, rebuild it from `getMessageId()` and
+`getMessageArgs()`.
 
 ### The catalogue
 
-`i18n/upload.pot` lists every string that gets looked up, with translator comments for the
-ones carrying placeholders. It is a template — there are no `.po` or `.mo` files here. Seed
-your own catalogue from it and merge it forward when you update the library:
+`i18n/upload.pot` lists every string that gets looked up, with translator comments on the ones
+that take values. It is a template only; there are no `.po` or `.mo` files here. Seed your own
+catalogue from it, and merge it forward when you update:
 
 ```bash
 msgmerge --update my-plugin.po vendor/gravitypdf/upload/i18n/upload.pot
 ```
 
-Or generate your own from the installed source. One flag names the marker, and you need to
-know nothing else about this library:
+Or extract from the installed source yourself. One flag names the marker:
 
 ```bash
 xgettext --language=PHP --keyword=__ --add-comments=translators: \
     -o my-plugin.pot $(find vendor/gravitypdf/upload/src -name '*.php')
 ```
 
-Message wording is API: changing it is a breaking change and appears in
-[CHANGELOG.md](CHANGELOG.md), so a reworded message shows up as an untranslated string rather
-than silently reverting to English.
+Wording is API. Changing it is a breaking change and is listed in
+[CHANGELOG.md](CHANGELOG.md), so a reworded message turns up as untranslated rather than
+quietly reverting to English.
 
 ### Using an existing translation library
 
-The seam is a plain `callable`, so it fits whatever you already run and costs this library
-nothing: `ext-fileinfo` and no packages. It loads no catalogue, chooses no locale, and has no
-plural forms to pluralise — your application is already doing all of that, and one lookup is
-what is left. All three below hand back the string they were given when a lookup finds nothing,
-which is what the seam expects.
+A plain `callable`, so it fits whatever you already run and adds no dependency — this library
+still requires only `ext-fileinfo`. It loads no catalogue, picks no locale, and has no plurals,
+because your application handles all of that. One lookup is all that is left.
 
-[Symfony](https://symfony.com/doc/current/translation.html). `Translation::DOMAIN` maps straight
-onto a Symfony translation domain, so `translations/gravitypdf-upload.es.xlf` is found with no
-further wiring:
+| | Catalogue | Notes |
+|---|---|---|
+| [Symfony](docs/translation/symfony.md) | `.po`, read natively | `Translation::DOMAIN` is a valid Symfony domain |
+| [Laravel](docs/translation/laravel.md) | `lang/de.json`, keyed by msgid | no key scheme to invent |
+| [php-gettext](docs/translation/php-gettext.md) | `.mo` | pure PHP, no `ext-gettext` |
+| [WordPress](docs/translation/wordpress.md) | merged into your own `.pot` | not for wordpress.org-hosted plugins |
 
-```php
-Translation::setTranslator(
-    static function (string $text, string $domain) use ($translator): string {
-        return $translator->trans($text, [], $domain);
-    }
-);
-```
+An untranslated entry falls back to the English, including when the library returns an empty
+string for one — Symfony's `PoFileLoader` does, so a partly-translated catalogue would
+otherwise blank the message.
 
-[Laravel](https://laravel.com/docs/localization). JSON language files are keyed by the source
-string, which is what a msgid is, so `lang/es.json` needs no mapping of its own:
-
-```php
-Translation::setTranslator(static function (string $text): string {
-    return \__($text);
-});
-```
-
-[php-gettext](https://github.com/php-gettext/Translator), reading a `.mo` compiled from the
-catalogue above:
-
-```php
-use Gettext\Loader\MoLoader;
-use Gettext\Translator;
-
-$gettext = Translator::createFromTranslations((new MoLoader())->loadFile('es.mo'));
-
-Translation::setTranslator(static function (string $text) use ($gettext): string {
-    return $gettext->gettext($text);
-});
-```
-
-WordPress needs one more step, for a reason unrelated to the runtime. It has its own section
-below.
-
-### WordPress
-
-The runtime side is four lines:
-
-```php
-Translation::setTranslator(static function (string $text, string $domain): string {
-    /* phpcs:ignore WordPress.WP.I18n.NonSingularStringLiteralText -- ids come from the catalogue */
-    return \__($text, 'my-plugin');
-});
-```
-
-**The leading backslash is doing work.** If the file holding this closure also writes a
-validation of your own, it will have imported this library's marker — and `__($text,
-'my-plugin')` would then resolve to the marker, which hands back its argument. The translator
-becomes a permanent no-op, silently, and every message stays English. `\__()` is unambiguously
-WordPress's. The same applies anywhere you call WordPress's `__()` in a file that imports the
-marker.
-
-Extraction is one command. `wp i18n make-pot` never looks inside `vendor/`, so merge this
-library's catalogue into yours as you build it:
-
-```bash
-wp i18n make-pot . languages/my-plugin.pot \
-    --merge=vendor/gravitypdf/upload/i18n/upload.pot
-```
-
-The msgids land in your project under your own text domain, and from there it is your ordinary
-translation pipeline — nothing about this library is special:
-
-```bash
-msginit --locale=de_DE --input=languages/my-plugin.pot \
-    --output=languages/my-plugin-de_DE.po
-# translate, then:
-msgfmt --check --output-file=languages/my-plugin-de_DE.mo languages/my-plugin-de_DE.po
-```
-
-```php
-load_plugin_textdomain('my-plugin', false, 'my-plugin/languages');
-```
-
-Re-merge when you update this library. A message that was reworded appears as a new untranslated
-string rather than silently reverting to English, because the wording is API here and a change to
-it is in [CHANGELOG.md](CHANGELOG.md).
-
-**Plugins distributed on wordpress.org are not covered by this.** translate.wordpress.org builds
-a plugin's GlotPress project by running `wp i18n make-pot` over your source itself — it does not
-read the `.pot` you ship, and it cannot be pointed at `vendor/`, since `--exclude` merges into
-the default rather than replacing it and the importer passes no path arguments at all. So these
-strings never reach GlotPress, and shipping your own `.mo` alongside a language pack does not
-help either: `WP_Textdomain_Registry` searches `WP_LANG_DIR/plugins` before a plugin's own
-directory and stops at the first match, so the language pack wins for every locale it covers.
-
-Getting them into a wordpress.org project means writing the msgids into your own tree as literal
-`__()` calls under your own domain, in a file nothing ever includes — gettext resolves by msgid
-and domain rather than by declaring file, so the runtime lookup finds them. WordPress.org does
-this for itself in `plugin-directory`'s `static_strings()` and the generated
-`extra/translation-strings.php` of several of its repositories. `i18n/upload.pot` has everything
-such a file would need; generating it is a dozen lines and this library does not ship them.
+Each page carries a working adapter, the commands to build the catalogue, and what to watch
+for. They are checked against the real libraries by `composer translator-readme`.
 
 ### Reacting to a failure rather than showing it
 
-Messages are for reading. To branch on *why* a file was rejected, use the error code, which is
-stable across releases in a way the wording is not:
+Messages are for reading. To branch on *why* a file was rejected, use the error code. Codes are
+stable across releases; wording is not:
 
 ```php
 use GravityPdf\Upload\ErrorCode;
@@ -767,20 +684,20 @@ foreach ($file->getErrorDetails() as $error) {
 }
 ```
 
-Each entry carries `code`, the untranslated `message_id` and its `args`, the sanitized
-`filename` the failure was about (`null` where it was not about one file), and `message`, the
-finished line `getErrors()` returns. The `message_id` and `args` are there so you can render
-the message with your own wording and never touch this library's translator:
+Each entry holds `code`, the untranslated `message_id` and its `args`, the sanitized `filename`
+(`null` if the failure was not about one file), and `message`, the finished line `getErrors()`
+returns. Use `message_id` and `args` to write the message yourself, without this library's
+translator:
 
 ```php
 $message = sprintf(\__($error['message_id'], 'my-plugin'), ...$error['args']);
 ```
 
-Guard that `sprintf()` if the catalogue is not yours to trust: a translation whose placeholders
-do not match throws `ArgumentCountError` on PHP 8, on the failure path. `Translation::render()`
-does this for you and falls back to the English.
+Guard that `sprintf()` if you do not control the catalogue. On PHP 8 a translation whose
+placeholders do not match throws `ArgumentCountError` — on the failure path, of all places.
+`Translation::render()` handles this and falls back to English.
 
-`Exception::getErrorCode()` answers the same codes for a throw, including from storage.
+`Exception::getErrorCode()` returns the same codes, including for storage failures.
 
 ## Security notes
 
@@ -990,11 +907,13 @@ Each implements `ValidationInterface` and throws `Exception` on failure.
 
 #### Stating a size in a locale
 
-`Validation\Size` writes `4.7 MB`, with a `.`, because choosing a separator needs a locale and
-this library takes none. `scale()` is the seam for that — it picks both the number and the
-unit, and is called through `static::`:
+`Validation\Size` writes `4.7 MB` with a `.`, because picking another separator needs a locale
+this library does not take. Override `scale()` to change it. It chooses the unit as well as
+formatting the number, and is called through `static::` so your override runs:
 
 ```php
+use GravityPdf\Upload\Validation\Size;
+
 class LocalisedSize extends Size
 {
     protected static function scale(int $bytes, bool $down): array
@@ -1006,10 +925,12 @@ class LocalisedSize extends Size
 }
 ```
 
-Return a unit key that `getTooLargeMessages()` and `getTooSmallMessages()` both hold — `'B'`,
-`'KB'`, `'MB'` or `'GB'` — or override those too, since the unit is named inside the message
-rather than interpolated into it. It rarely comes up: `'5M'`, `'500K'` and any binary byte
-count divide exactly into the 1024-based ladder and render as whole numbers.
+Return one of the unit keys `getTooLargeMessages()` and `getTooSmallMessages()` hold — `'B'`,
+`'KB'`, `'MB'` or `'GB'` — or override those too. The unit is part of the message, not a value
+put into it.
+
+This rarely comes up. `'5M'`, `'500K'` and any binary byte count divide exactly by 1024 and
+print as whole numbers, so no separator appears.
 
 ### Filename
 

@@ -32,9 +32,8 @@ class I18nTest extends TestCase
     }
 
     /**
-     * It shares WordPress's name but not its behaviour: the lookup happens where the message
-     * is rendered, so `Exception::getMessage()` stays English, `getErrorDetails()` keeps the
-     * msgid, and a locale switched after validating is the one the reader sees.
+     * Same name as WordPress's, different behaviour. The lookup happens where the message is
+     * rendered, which is what keeps `Exception::getMessage()` English and the msgid intact.
      */
     public function testTheMarkerNeverTranslates(): void
     {
@@ -46,13 +45,12 @@ class I18nTest extends TestCase
     }
 
     /**
-     * `__()` is namespaced, so an unqualified call from another namespace falls back to the
-     * global one. Here nothing defines a global `__()`, so that is a fatal on the failure
-     * path; under WordPress the global exists and the call silently translates at the throw
-     * instead, which nothing reports. Reading the source keeps either off the table.
+     * A file that forgets the import calls the global `__()` instead. Under PHPUnit there is
+     * none, so that is a fatal; under WordPress there is one, and the string is translated far
+     * too early with nothing to report it.
      *
-     * One test over every file rather than one per file: per-file, it could only assert about
-     * a file that marks something, so renaming the marker made every case vacuous and the
+     * One test over the whole corpus, not one per file. Per-file it could only assert about a
+     * file that marks something, so renaming the marker made every case vacuous while the
      * suite stayed green. The marker has been renamed twice.
      */
     public function testEveryCallerCanReachTheMarker(): void
@@ -79,8 +77,8 @@ class I18nTest extends TestCase
     }
 
     /**
-     * The fatal above only exists while nothing defines a global `__()`. A WordPress stub in
-     * `tests/bootstrap.php` would absorb it, leaving the source scan as the only guard.
+     * That fatal only exists while nothing defines a global `__()`. A WordPress stub in
+     * `tests/bootstrap.php` would swallow it, leaving the source scan as the only guard.
      */
     public function testNoGlobalMarkerCanMaskAMissingImport(): void
     {

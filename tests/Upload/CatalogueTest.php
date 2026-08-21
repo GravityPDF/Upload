@@ -39,11 +39,11 @@ class CatalogueTest extends TestCase
     }
 
     /**
-     * The seven `UPLOAD_ERR_*` strings are array values rather than call arguments, so no
-     * extraction keyword reaches them: the marker around each is the only reason they are in
-     * the catalogue. Drop it and they leave it silently.
+     * The seven `UPLOAD_ERR_*` strings are array values, not call arguments, so no extraction
+     * keyword reaches them. The marker around each is the only reason they are in the
+     * catalogue; drop it and they leave silently.
      *
-     * Read through a bound closure rather than `ReflectionMethod::setAccessible()`, deprecated
+     * Read through a bound closure because `ReflectionMethod::setAccessible()` is deprecated
      * as of PHP 8.5.
      */
     public function testEveryUploadErrorMessageIsInTheCatalogue(): void

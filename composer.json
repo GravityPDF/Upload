@@ -45,10 +45,10 @@
     ]
   },
   "scripts": {
-    "check-syntax": "@php ./vendor/bin/parallel-lint --exclude .git --exclude vendor --exclude tools/phpstan/vendor --exclude tools/psr7-readme/vendor .",
+    "check-syntax": "@php ./vendor/bin/parallel-lint --exclude .git --exclude vendor --exclude tools/phpstan/vendor --exclude tools/psr7-readme/vendor --exclude tools/translator-readme/vendor .",
     "i18n:pot": "@php tools/i18n/generate-pot.php",
-    "lint": "@php ./vendor/bin/phpcs --standard=PSR12 ./src/ ./tests/ ./tools/i18n/ ./tools/psr7-readme/verify.php",
-    "lint:fix": "@php ./vendor/bin/phpcbf --standard=PSR12 ./src/ ./tests/ ./tools/i18n/ ./tools/psr7-readme/verify.php",
+    "lint": "@php ./vendor/bin/phpcs --standard=PSR12 ./src/ ./tests/ ./tools/i18n/ ./tools/psr7-readme/verify.php ./tools/translator-readme/verify.php ./tools/translator-readme/marker-import.php ./tools/translator-readme/global-underscore.php",
+    "lint:fix": "@php ./vendor/bin/phpcbf --standard=PSR12 ./src/ ./tests/ ./tools/i18n/ ./tools/psr7-readme/verify.php ./tools/translator-readme/verify.php ./tools/translator-readme/marker-import.php ./tools/translator-readme/global-underscore.php",
     "phpstan": [
       "@composer install --working-dir=tools/phpstan --no-interaction --quiet",
       "@php tools/phpstan/vendor/bin/phpstan analyse"
@@ -57,6 +57,10 @@
     "psr7-readme": [
       "@composer update --working-dir=tools/psr7-readme --no-interaction --quiet",
       "@php tools/psr7-readme/verify.php"
+    ],
+    "translator-readme": [
+      "@composer update --working-dir=tools/translator-readme --no-interaction --quiet",
+      "@php tools/translator-readme/verify.php"
     ]
   },
   "replace": {

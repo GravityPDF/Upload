@@ -36,13 +36,12 @@ namespace GravityPdf\Upload;
 /**
  * The stable identifier behind every message this library shows an end user
  *
- * `getErrors()` returns prose: the right thing to render, the wrong thing to branch on, since
- * it is translated and reworded between releases. These codes are neither. Match one to react
- * to a particular failure, or to key your own wording off it.
+ * `getErrors()` returns prose. Render it, but do not branch on it: it gets translated, and
+ * the wording changes between releases. These codes do neither. Match one to react to a
+ * particular failure, or to look up wording of your own.
  *
- * A code is not a message id. The message id is the English source string, so it travels with
- * the catalogue and changes when the wording does; a code outlives the wording.
- * `File::getErrorDetails()` and `Exception::getErrorCode()` carry both.
+ * A code is not a message id. The message id is the English string, so it changes whenever the
+ * wording does. `File::getErrorDetails()` and `Exception::getErrorCode()` give you both.
  *
  * @since   4.0.0
  *

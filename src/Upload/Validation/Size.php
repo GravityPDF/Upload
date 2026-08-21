@@ -101,9 +101,8 @@ class Size implements ValidationInterface
         }
 
         if ($fileSize < $this->minSize) {
-            /* Rounded up, where the maximum rounds down: both directions state a bound the
-               file would actually satisfy, so a reader who resizes to the number they were
-               given is not rejected a second time. */
+            /* Rounds up; the maximum rounds down. Either way the size named is one the file
+               would pass at, so resizing to the number given works. */
             list($amount, $unit) = static::scale($this->minSize, false);
 
             throw new Exception(
@@ -127,15 +126,13 @@ class Size implements ValidationInterface
     }
 
     /**
-     * The message for a file over the limit, one per unit the limit can be stated in
+     * One message per unit the limit can be stated in, for a file over it
      *
-     * A message id per unit rather than one with the unit as a value, because a value is
-     * interpolated after the lookup and a translator never sees it. `MB` is not universal —
-     * French writes `Mo` — so the unit has to sit inside the string they translate.
+     * The unit is part of the message rather than a value interpolated into it, because
+     * values are never translated and `MB` is not universal — French writes `Mo`.
      *
-     * A method rather than a property for the reason `File::getUploadErrorMessages()` is one:
-     * a PHP 7.3 constant expression cannot call `__()`. Override it to reword, and the
-     * replacements are yours to extract.
+     * A method, not a property, because a PHP 7.3 constant expression cannot call `__()`.
+     * Override it to reword; your replacements are then yours to extract.
      *
      * @return array<string,string> Keyed by the unit keys `scale()` returns
      */
@@ -158,9 +155,9 @@ class Size implements ValidationInterface
     }
 
     /**
-     * The message for a file under the limit, one per unit the limit can be stated in
+     * The same, for a file under the limit
      *
-     * @see getTooLargeMessages() On why the unit is in the message rather than beside it
+     * @see getTooLargeMessages() On why the unit is inside the message
      *
      * @return array<string,string> Keyed by the unit keys `scale()` returns
      */
@@ -183,20 +180,19 @@ class Size implements ValidationInterface
     }
 
     /**
-     * State a byte count in the largest unit it reaches, as the amount and that unit's key
+     * State a byte count in the largest unit it reaches
      *
-     * The inverse of `File::humanReadableToBytes()`, and 1024-based like it, so
-     * `new Size('5M')` reports `5 MB` rather than `5242880 bytes` or `4.8 MB`.
+     * The inverse of `File::humanReadableToBytes()` and 1024-based like it, so `new Size('5M')`
+     * reports `5 MB`. One decimal at most.
      *
-     * One decimal at most, and the rounding is directional: a maximum rounds **down** and a
-     * minimum **up**, so the number shown is always a size the file would pass at. Rounding a
-     * maximum of 5,000,000 bytes to `4.8 MB` would name a size still rejected.
+     * A maximum rounds down and a minimum rounds up, so the size named is always one the file
+     * would pass at. A 5,000,000 byte maximum shown as `4.8 MB` would name a size still
+     * rejected.
      *
-     * The decimal separator is a `.`, because choosing one needs a locale and this library
-     * takes none. **This is the seam for that**: override it, and a subclass owns both the
-     * number and the unit the message is chosen by, which a formatter hook on `Translation`
-     * could not do — the unit is picked here, and by the time a value is interpolated the
-     * message id naming it has already been chosen.
+     * The separator is a `.`, because picking another needs a locale this library does not
+     * take. **Override this to change it** — you get the unit as well as the number, and the
+     * unit decides which message is used. Return a key `getTooLargeMessages()` and
+     * `getTooSmallMessages()` both hold, or override those too.
      *
      * ```php
      * protected static function scale(int $bytes, bool $down): array
@@ -206,9 +202,6 @@ class Size implements ValidationInterface
      *     return [number_format_i18n((float) $amount, 1), $unit];
      * }
      * ```
-     *
-     * Return a unit key `getTooLargeMessages()` and `getTooSmallMessages()` both hold, or
-     * override those too. Called through `static::`, so an override is reached.
      *
      * @param bool $down Round towards zero, for an upper bound
      * @return array<int,string> The scaled amount, and the unit key naming its message
