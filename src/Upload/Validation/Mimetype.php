@@ -33,9 +33,12 @@ declare(strict_types=1);
 
 namespace GravityPdf\Upload\Validation;
 
+use GravityPdf\Upload\ErrorCode;
 use GravityPdf\Upload\Exception;
 use GravityPdf\Upload\FileInfoInterface;
 use GravityPdf\Upload\ValidationInterface;
+
+use function GravityPdf\Upload\__;
 
 /**
  * Validate Upload Media Type
@@ -72,8 +75,11 @@ class Mimetype implements ValidationInterface
     {
         if (!in_array($fileInfo->getMimetype(), $this->mimetypes, true)) {
             throw new Exception(
-                sprintf('Invalid mimetype. Must be one of: %s', implode(', ', $this->mimetypes)),
-                $fileInfo
+                /* translators: %1$s: comma-separated list of the accepted media types */
+                __('Invalid mimetype. Must be one of: %1$s'),
+                $fileInfo,
+                ErrorCode::MIMETYPE_NOT_ALLOWED,
+                [implode(', ', $this->mimetypes)]
             );
         }
     }

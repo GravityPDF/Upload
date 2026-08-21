@@ -80,16 +80,6 @@ class File implements ArrayAccess, IteratorAggregate, Countable
         'afterUploadCallback',
     ];
 
-    /** @var string[] Upload error code messages */
-    protected static $errorCodeMessages = [
-        1 => 'The uploaded file exceeds the upload_max_filesize directive in php.ini',
-        2 => 'The uploaded file exceeds the MAX_FILE_SIZE directive that was specified in the HTML form',
-        3 => 'The uploaded file was only partially uploaded',
-        4 => 'No file was uploaded',
-        6 => 'Missing a temporary folder',
-        7 => 'Failed to write file to disk',
-        8 => 'A PHP extension stopped the file upload',
-    ];
 
     /** @var StorageInterface Storage delegate */
     protected $storage;
@@ -100,14 +90,28 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     /** @var ValidationInterface[] */
     protected $validations = [];
 
-    /** @var string[] Validation errors */
-    protected $errors = [];
+    /**
+     * @var array<int,array{code:string,message_id:string,args:array<int,string|int|float>,filename:string|null}>
+     *      Every error recorded so far, kept as its parts rather than as a finished line
+     *
+     * `private`, so `recordError()` is the only way in: the guarantee `getErrors()` carries is
+     * that method's rather than every call site's, and `getErrorDetails()` cannot be left with
+     * holes by an append that went around it.
+     *
+     * @phpstan-var list<array{code:string,message_id:string,args:list<string|int|float>,filename:string|null}>
+     */
+    private $errorDetails = [];
 
     /** @var bool Has the caller accepted storing files without validating them? */
     protected $allowUnvalidated = false;
 
-    /** @var string[] Errors recorded during construction, which `isValid()` must not discard */
-    protected $constructorErrors = [];
+    /**
+     * @var array<int,array{code:string,message_id:string,args:array<int,string|int|float>,filename:string|null}>
+     *      Errors recorded during construction, which `isValid()` must not discard
+     *
+     * @phpstan-var list<array{code:string,message_id:string,args:list<string|int|float>,filename:string|null}>
+     */
+    private $constructorErrorDetails = [];
 
     /** @var string[] Destination paths from the most recent `upload()`/`uploadValid()`, by offset */
     protected $uploadedFiles = [];
@@ -159,7 +163,11 @@ class File implements ArrayAccess, IteratorAggregate, Countable
             || array_key_exists('name', $_FILES[$key]) === false
             || array_key_exists('error', $_FILES[$key]) === false
         ) {
-            $this->recordError('An uploaded file was sent in a format that cannot be read');
+            $this->recordError(
+                __('An uploaded file was sent in a format that cannot be read'),
+                [],
+                ErrorCode::MALFORMED_UPLOAD
+            );
         } elseif (is_array($_FILES[$key]['tmp_name']) === true) {
             /* The SAPI builds every key of a multi-file entry as an array of the same length.
                Indexing one that is not is worse than useless: a string `name` yields a single
@@ -177,12 +185,16 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                    and casting it warns "Array to string conversion" on remote input. Same for
                    the other two keys, which a ragged or mistyped entry leaves short. */
                 if (is_string($tmpName) === false || is_string($name) === false || is_int($errorCode) === false) {
-                    $this->recordError('An uploaded file was sent in a format that cannot be read');
+                    $this->recordError(
+                        __('An uploaded file was sent in a format that cannot be read'),
+                        [],
+                        ErrorCode::MALFORMED_UPLOAD
+                    );
                     continue;
                 }
 
                 if ($errorCode !== UPLOAD_ERR_OK) {
-                    $this->recordError(static::formatUploadFailure($name, $errorCode));
+                    $this->recordUploadFailure($name, $errorCode);
                     continue;
                 }
 
@@ -196,13 +208,14 @@ class File implements ArrayAccess, IteratorAggregate, Countable
             /* The multi-file guard above, for the same reason: a non-string here is an uncaught
                TypeError out of createFromFactory(). The code is checked too because `(int) [0]`
                is 1, which reported the file as exceeding `upload_max_filesize`. */
-            $this->recordError('An uploaded file was sent in a format that cannot be read');
+            $this->recordError(
+                __('An uploaded file was sent in a format that cannot be read'),
+                [],
+                ErrorCode::MALFORMED_UPLOAD
+            );
         } elseif ($_FILES[$key]['error'] !== UPLOAD_ERR_OK) {
             /* No file behind a failed upload: `tmp_name` is '' for UPLOAD_ERR_NO_FILE */
-            $this->recordError(static::formatUploadFailure(
-                $_FILES[$key]['name'],
-                $_FILES[$key]['error']
-            ));
+            $this->recordUploadFailure($_FILES[$key]['name'], $_FILES[$key]['error']);
         } else {
             $this->objects[] = FileInfo::createFromFactory(
                 $_FILES[$key]['tmp_name'],
@@ -233,7 +246,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      */
     protected function init(StorageInterface $storage): void
     {
-        $this->constructorErrors = $this->errors;
+        $this->constructorErrorDetails = $this->errorDetails;
         $this->storage = $storage;
     }
 
@@ -251,16 +264,81 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      * a caller-installed implementation.
      *
      * A code with no message of its own — `UPLOAD_ERR_OK` included, since an entry that
-     * succeeded has no failure to report — reads as `Unknown Error`, as it does on the
+     * succeeded has no failure to report — reads as `Unknown error`, as it does on the
      * `$_FILES` path.
      */
     public static function formatUploadFailure(string $clientFilename, int $errorCode): string
     {
-        return sprintf(
-            '%s: %s',
-            Filename::sanitizeNameWithExtension($clientFilename),
-            static::$errorCodeMessages[$errorCode] ?? 'Unknown Error'
+        return self::renderMessage(
+            static::uploadFailureMessageId($errorCode),
+            [],
+            Filename::sanitizeNameWithExtension($clientFilename)
         );
+    }
+
+    /**
+     * Translate a recorded failure's parts into the line `getErrors()` returns
+     *
+     * The one place that composition happens, for `getErrorDetails()` and for
+     * `formatUploadFailure()`. Written out twice, they were two copies of it.
+     *
+     * The message is text this library did not necessarily write — a translation, or a custom
+     * validation's — so it is sanitized before the filename goes in front of it, and a message
+     * opening with a line break does not read as `file.txt:  message`. Sanitized again once
+     * assembled: the filename arrives clean, but that is its caller's doing, and this is where
+     * the guarantee that every string here is displayable lives.
+     *
+     * @param array<int,string|int|float> $args Values for the message id's placeholders
+     * @phpstan-param list<string|int|float> $args
+     * @param string|null $filename The sanitized name the failure is about, or null where it
+     *                              is not about one file
+     */
+    private static function renderMessage(string $messageId, array $args, ?string $filename): string
+    {
+        $message = Filename::sanitizeForDisplay(Translation::render($messageId, $args));
+
+        if ($filename !== null) {
+            $message = sprintf('%s: %s', $filename, $message);
+        }
+
+        return Filename::sanitizeForDisplay($message);
+    }
+
+    /**
+     * The message id describing one `UPLOAD_ERR_*` outcome
+     *
+     * A method rather than the property this was before 4.0.0, for the reason
+     * `FileSystem::getDefaultBlockedExtensions()` is one: a PHP 7.3 constant expression
+     * cannot call a function, so an array of literals is all a property could hold and an
+     * extractor cannot see one. `__()` marks each without translating it; the lookup happens
+     * where the message is rendered. Still `static::`, so a subclass replacing the wording
+     * keeps working — its strings are its own to extract.
+     *
+     * @return array<int,string> Keyed by `UPLOAD_ERR_*`
+     */
+    protected static function getUploadErrorMessages(): array
+    {
+        return [
+            UPLOAD_ERR_INI_SIZE =>
+                __('The uploaded file exceeds the upload_max_filesize directive in php.ini'),
+            UPLOAD_ERR_FORM_SIZE =>
+                __(
+                    'The uploaded file exceeds the MAX_FILE_SIZE directive that was specified in the HTML form'
+                ),
+            UPLOAD_ERR_PARTIAL => __('The uploaded file was only partially uploaded'),
+            UPLOAD_ERR_NO_FILE => __('No file was uploaded'),
+            UPLOAD_ERR_NO_TMP_DIR => __('The server is missing its temporary upload folder'),
+            UPLOAD_ERR_CANT_WRITE => __('The server could not write the file to disk'),
+            UPLOAD_ERR_EXTENSION => __('A PHP extension stopped the file upload'),
+        ];
+    }
+
+    /**
+     * @see getUploadErrorMessages() A code with no message of its own reads as `Unknown error`
+     */
+    protected static function uploadFailureMessageId(int $errorCode): string
+    {
+        return static::getUploadErrorMessages()[$errorCode] ?? __('Unknown error');
     }
 
     /**
@@ -404,31 +482,106 @@ class File implements ArrayAccess, IteratorAggregate, Countable
         return $this->allowUnvalidated;
     }
 
-    /** @return string[] Validation errors */
+    /**
+     * Every error recorded so far, as text to show whoever submitted the file
+     *
+     * Rendered on each call rather than when the error was recorded, so a batch validated
+     * before a locale switch and read after it does not answer in two languages.
+     *
+     * @return string[] Validation errors, as `"filename: message"` where the failure is about
+     *                  one file
+     */
     public function getErrors(): array
     {
-        return $this->errors;
+        return array_column($this->getErrorDetails(), 'message');
+    }
+
+    /**
+     * The same errors as their parts, for a caller who wants something other than this
+     * library's wording
+     *
+     * Branch on `code`, an `ErrorCode` constant: it is stable across releases, where the
+     * message is translated and reworded. `message_id` is the English source string, also the
+     * gettext msgid, and `args` are the values its placeholders take — enough for a caller to
+     * render the message from their own catalogue. `filename` is already sanitized, and null
+     * where the failure is not about one file. `message` is the line `getErrors()` returns.
+     *
+     * @return array<int,array{code:string,message_id:string,args:array<int,string|int|float>,
+     *               filename:string|null,message:string}>
+     * @phpstan-return list<array{code:string,message_id:string,args:list<string|int|float>,
+     *                 filename:string|null,message:string}>
+     */
+    public function getErrorDetails(): array
+    {
+        $details = [];
+
+        foreach ($this->errorDetails as $error) {
+            $error['message'] = self::renderMessage(
+                $error['message_id'],
+                $error['args'],
+                $error['filename']
+            );
+            $details[] = $error;
+        }
+
+        return $details;
     }
 
     /**
      * Record one string for `getErrors()`
      *
-     * The one way anything reaches `$errors`, so the guarantee `getErrors()` carries — every
-     * string in it sanitized — is a property of this method rather than of nine call sites
-     * remembering. Most of them assemble a literal this library wrote, where the sanitizing is
-     * a no-op; the point is that a site added later cannot be the one that forgets.
+     * The one way anything reaches the error list, so the guarantee `getErrors()` carries —
+     * every string in it sanitized — belongs to this method rather than to every call site
+     * remembering. Most sites pass a literal this library wrote, where sanitizing is a no-op;
+     * the point is that a site added later cannot be the one that forgets.
      *
-     * This is the display half only. A filename in a message is still put through
-     * `Filename::sanitizeNameWithExtension()` by the caller assembling it, because those are
-     * the naming rules and this is prose — `getSanitizedFilename()` and `formatUploadFailure()`
-     * own that. Running both here would report `user.avatar` as `user-avatar`.
+     * The display half only. A filename is put through `Filename::sanitizeNameWithExtension()`
+     * by the caller instead, since those are the naming rules and this is prose: running both
+     * here would report `user.avatar` as `user-avatar`.
      *
-     * `protected` because `$errors` is: a subclass could always append to it directly, and this
-     * gives one that does the version which keeps the guarantee.
+     * `protected` because a `File` subclass has its own reasons to report a failure, and the
+     * only way in since `$errorDetails` became `private` in 4.0.0.
+     *
+     * @param string $messageId The English message, or a message id whose `%1$s` placeholders
+     *                          `$args` fills. Marked with `__()` at the call site, not
+     *                          translated here: `getErrorDetails()` renders it, so the locale
+     *                          in force when the message is read is the one used
+     * @param array<array-key,string|int|float> $args Values for the message's placeholders
+     * @param string $errorCode An `ErrorCode` constant, for a caller branching on the reason
+     * @param string|null $filename A sanitized filename to name in front of the message, or
+     *                              null where the failure is not about one file
      */
-    protected function recordError(string $message): void
+    protected function recordError(
+        string $messageId,
+        array $args = [],
+        string $errorCode = ErrorCode::NONE,
+        ?string $filename = null
+    ): void {
+        $this->errorDetails[] = [
+            'code' => $errorCode,
+            'message_id' => $messageId,
+            'args' => array_values($args),
+            'filename' => $filename,
+        ];
+    }
+
+    /**
+     * Record an entry that never became an upload, from the client-supplied filename and an
+     * `UPLOAD_ERR_*` code
+     *
+     * Shared by the `$_FILES` constructor and `FileList`'s `$failures`, so the two word a
+     * failed transfer identically. `formatUploadFailure()` is the same thing for a caller
+     * assembling the line themselves; both read `uploadFailureMessageId()` and compose through
+     * `renderMessage()`, so neither can drift.
+     */
+    protected function recordUploadFailure(string $clientFilename, int $errorCode): void
     {
-        $this->errors[] = Filename::sanitizeForDisplay($message);
+        $this->recordError(
+            static::uploadFailureMessageId($errorCode),
+            [],
+            ErrorCode::forUploadError($errorCode),
+            Filename::sanitizeNameWithExtension($clientFilename)
+        );
     }
 
     /**
@@ -488,8 +641,8 @@ class File implements ArrayAccess, IteratorAggregate, Countable
         try {
             $valid = $this->prepareUpload();
 
-            if (!empty($this->errors)) {
-                throw new Exception('File validation failed');
+            if (!empty($this->errorDetails)) {
+                throw new Exception('File validation failed', null, ErrorCode::VALIDATION_FAILED);
             }
 
             $this->guardCollectionNotEmpty();
@@ -539,7 +692,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
             $this->running = false;
         }
 
-        return empty($this->errors);
+        return empty($this->errorDetails);
     }
 
     /**
@@ -609,7 +762,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     private function guardCollectionNotEmpty(): void
     {
         if (count($this->objects) === 0) {
-            throw new Exception('There are no files to upload');
+            throw new Exception('There are no files to upload', null, ErrorCode::NO_FILES);
         }
     }
 
@@ -672,12 +825,12 @@ class File implements ArrayAccess, IteratorAggregate, Countable
             $this->running = false;
         }
 
-        return empty($this->errors);
+        return empty($this->errorDetails);
     }
 
     /**
      * Run the uploaded-file check and every validation against every file, recording each
-     * failure in `$this->errors`
+     * failure in `$this->errorDetails`
      *
      * Returns the files rather than a boolean because `uploadValid()` needs to know *which*
      * files passed, and running the validations twice to find out would let a validator with
@@ -691,7 +844,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     {
         /* Reset rather than append: upload() validates again, so the
            `if (!$file->isValid()) {…} $file->upload();` pattern would double every error */
-        $this->errors = $this->constructorErrors;
+        $this->errorDetails = $this->constructorErrorDetails;
 
         $valid = [];
 
@@ -701,7 +854,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                hand a rejected upload to storage. Taken before the first hook rather than
                after, so that guarantee covers the whole iteration and not just the part below
                it: `$errors` is `protected`, so a subclass can record from either hook. */
-            $errorCount = count($this->errors);
+            $errorCount = count($this->errorDetails);
 
             $this->applyCallback('beforeValidationCallback', $fileInfo);
 
@@ -709,11 +862,12 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                firing once per file, so a caller can open and close a per-file resource with
                them. Skipping the after-hook leaks on exactly the files that failed. */
             if ($fileInfo->isUploadedFile() === false) {
-                $this->recordError(sprintf(
-                    '%s: %s',
-                    $this->getSanitizedFilename($fileInfo),
-                    'Is not an uploaded file'
-                ));
+                $this->recordError(
+                    __('This file was not received as an upload'),
+                    [],
+                    ErrorCode::NOT_AN_UPLOADED_FILE,
+                    $this->getSanitizedFilename($fileInfo)
+                );
             } else {
                 /* Sanitizing is several regex passes and only an error string reads the
                    result, so it is taken on the first failure and reused by the rest rather
@@ -727,14 +881,20 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                         $validation->validate($fileInfo);
                     } catch (Exception $e) {
                         $sanitizedFilename = $sanitizedFilename ?? $this->getSanitizedFilename($fileInfo);
-                        /* Text this library did not write. No shipped validator reaches here
-                           with anything but configuration; a validator of your own may.
-                           `recordError()` is what makes the recorded string safe; sanitizing
-                           the message on its own first is for the shape of it, trimming the
-                           part rather than the assembled line so a message that opens with a
-                           newline does not read as `file.txt:  message`. */
-                        $message = Filename::sanitizeForDisplay($e->getMessage());
-                        $this->recordError(sprintf('%s: %s', $sanitizedFilename, $message));
+                        /* Recorded as its parts, so a validation of your own is translated the
+                           same way a shipped one is: `getMessageId()` is whatever it threw,
+                           which is a msgid if it marked one and a finished English sentence if
+                           it did not — `Translation::render()` treats the two alike. One that
+                           named no code is reported as a rejection rather than as nothing, so
+                           every entry has something to branch on. */
+                        $this->recordError(
+                            $e->getMessageId(),
+                            $e->getMessageArgs(),
+                            $e->getErrorCode() !== ErrorCode::NONE
+                                ? $e->getErrorCode()
+                                : ErrorCode::VALIDATION_REJECTED,
+                            $sanitizedFilename
+                        );
                     } catch (LogicException $e) {
                         /* By PHP's own definition a bug in the program, not a failed file.
                            Absorbed, `getHash('sha255')` in a validator would be reported as a
@@ -747,14 +907,19 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                            absolute path, a class name is internal structure, and getErrors() is
                            shown to end users. Rethrow an Upload\Exception to surface either. */
                         $sanitizedFilename = $sanitizedFilename ?? $this->getSanitizedFilename($fileInfo);
-                        $this->recordError(sprintf('%s: Validation could not be completed', $sanitizedFilename));
+                        $this->recordError(
+                            __('Validation could not be completed'),
+                            [],
+                            ErrorCode::VALIDATION_INCOMPLETE,
+                            $sanitizedFilename
+                        );
                     }
                 }
             }
 
             $this->applyCallback('afterValidationCallback', $fileInfo);
 
-            if (count($this->errors) === $errorCount) {
+            if (count($this->errorDetails) === $errorCount) {
                 $valid[$index] = $fileInfo;
             }
         }

@@ -144,6 +144,9 @@ class FileTest extends TestCase
         /* The factory is process-wide state; leaving it set leaks into every later test */
         FileInfo::resetFactory();
 
+        /* So is the translator, and `backupGlobals` does not cover a static property */
+        Translation::resetTranslator();
+
         parent::tear_down();
     }
 
@@ -414,7 +417,7 @@ class FileTest extends TestCase
         /* The line break is gone; the rest of the name survives, so the message still says
            which file it is about */
         $this->assertSame(
-            ['report-2024-01-01 INFO all clear.txt: Is not an uploaded file'],
+            ['report-2024-01-01 INFO all clear.txt: This file was not received as an upload'],
             $file->getErrors()
         );
     }
@@ -456,8 +459,8 @@ class FileTest extends TestCase
             ],
             'UPLOAD_ERR_PARTIAL' => [UPLOAD_ERR_PARTIAL, 'The uploaded file was only partially uploaded'],
             'UPLOAD_ERR_NO_FILE' => [UPLOAD_ERR_NO_FILE, 'No file was uploaded'],
-            'UPLOAD_ERR_NO_TMP_DIR' => [UPLOAD_ERR_NO_TMP_DIR, 'Missing a temporary folder'],
-            'UPLOAD_ERR_CANT_WRITE' => [UPLOAD_ERR_CANT_WRITE, 'Failed to write file to disk'],
+            'UPLOAD_ERR_NO_TMP_DIR' => [UPLOAD_ERR_NO_TMP_DIR, 'The server is missing its temporary upload folder'],
+            'UPLOAD_ERR_CANT_WRITE' => [UPLOAD_ERR_CANT_WRITE, 'The server could not write the file to disk'],
             'UPLOAD_ERR_EXTENSION' => [UPLOAD_ERR_EXTENSION, 'A PHP extension stopped the file upload'],
         ];
     }
@@ -470,7 +473,7 @@ class FileTest extends TestCase
      */
     public function testFormatUploadFailureFallsBackForACodeItDoesNotKnow(int $code): void
     {
-        $this->assertSame('report.txt: Unknown Error', File::formatUploadFailure('report.txt', $code));
+        $this->assertSame('report.txt: Unknown error', File::formatUploadFailure('report.txt', $code));
     }
 
     /** @return array<string, array{0: int}> */
@@ -1496,7 +1499,7 @@ class FileTest extends TestCase
 
         $this->assertFalse($file->uploadValid());
         $this->assertSame(['/tmp/uploads/foo.txt'], $file->getUploadedLocators());
-        $this->assertSame(['bar.txt: Is not an uploaded file'], $file->getErrors());
+        $this->assertSame(['bar.txt: This file was not received as an upload'], $file->getErrors());
     }
 
     /**
@@ -1681,9 +1684,213 @@ class FileTest extends TestCase
 
         $this->assertSame(
             $expected,
-            preg_match_all('/\$this->errors\s*\[\s*\]\s*=/', $source),
-            $file . ' must reach $errors through recordError()'
+            preg_match_all('/\$this->errorDetails\s*\[\s*\]\s*=/', $source),
+            $file . ' must reach $errorDetails through recordError()'
         );
+    }
+
+    /********************************************************************************
+     * Error codes and translation
+     *******************************************************************************/
+
+    /**
+     * The message is what to show and the code is what to branch on: one is translated and
+     * reworded between releases, the other is not.
+     */
+    public function testErrorDetailsCarryTheCodeAndTheMessageParts(): void
+    {
+        $file = new File('bad', $this->storage);
+
+        $this->assertSame(
+            [
+                [
+                    'code' => ErrorCode::INI_SIZE,
+                    'message_id' => 'The uploaded file exceeds the upload_max_filesize directive in php.ini',
+                    'args' => [],
+                    'filename' => 'single.txt',
+                    'message' => 'single.txt: The uploaded file exceeds the upload_max_filesize directive in php.ini',
+                ],
+            ],
+            $file->getErrorDetails()
+        );
+    }
+
+    public function testGetErrorsIsTheMessageOfEveryErrorDetail(): void
+    {
+        $file = new File('bad', $this->storage);
+
+        $this->assertSame(
+            array_column($file->getErrorDetails(), 'message'),
+            $file->getErrors()
+        );
+    }
+
+    public function testAValidationFailureCarriesTheValidationsCodeAndValues(): void
+    {
+        $file = new File('single', $this->storage);
+        $file->addValidation(new Size(1));
+
+        $this->assertFalse($file->isValid());
+        $this->assertSame(ErrorCode::SIZE_TOO_LARGE, $file->getErrorDetails()[0]['code']);
+        $this->assertSame(
+            'File size is too large. Must be no more than %1$s bytes',
+            $file->getErrorDetails()[0]['message_id']
+        );
+
+        /* The scaled amount, as a string: the unit lives in the message id, so the value is
+           what goes in front of it rather than the raw byte count. */
+        $this->assertSame(['1'], $file->getErrorDetails()[0]['args']);
+    }
+
+    /**
+     * A validation of your own that names no code is still reported as a rejection, so a
+     * caller reading `getErrorDetails()` has something to branch on for every entry.
+     */
+    public function testAValidationThatNamesNoCodeIsReportedAsARejection(): void
+    {
+        $file = new File('single', $this->storage);
+        $file->addValidation(new class implements ValidationInterface {
+            public function validate(FileInfoInterface $fileInfo): void
+            {
+                throw new Exception('Rejected by the scanner');
+            }
+        });
+
+        $this->assertFalse($file->isValid());
+        $this->assertSame(ErrorCode::VALIDATION_REJECTED, $file->getErrorDetails()[0]['code']);
+        $this->assertSame(['single.txt: Rejected by the scanner'], $file->getErrors());
+    }
+
+    public function testAnAbsorbedThrowableIsReportedAsAnIncompleteValidation(): void
+    {
+        $file = new File('single', $this->storage);
+        $file->addValidation(new class implements ValidationInterface {
+            public function validate(FileInfoInterface $fileInfo): void
+            {
+                throw new \RuntimeException('/var/www/secret/path failed');
+            }
+        });
+
+        $this->assertFalse($file->isValid());
+        $this->assertSame(ErrorCode::VALIDATION_INCOMPLETE, $file->getErrorDetails()[0]['code']);
+        $this->assertSame(['single.txt: Validation could not be completed'], $file->getErrors());
+    }
+
+    public function testAFileThatIsNotAnUploadCarriesItsCode(): void
+    {
+        $this->stubUploadedFileCheck(false);
+
+        $file = new File('single', $this->storage);
+        $file->addValidation(new Size(500));
+
+        $this->assertFalse($file->isValid());
+        $this->assertSame(ErrorCode::NOT_AN_UPLOADED_FILE, $file->getErrorDetails()[0]['code']);
+    }
+
+    public function testAMalformedEntryCarriesItsCode(): void
+    {
+        $_FILES['broken'] = ['name' => 'a.txt', 'error' => UPLOAD_ERR_OK];
+
+        $file = new File('broken', $this->storage);
+
+        $this->assertSame(ErrorCode::MALFORMED_UPLOAD, $file->getErrorDetails()[0]['code']);
+        $this->assertNull($file->getErrorDetails()[0]['filename']);
+        $this->assertSame(['An uploaded file was sent in a format that cannot be read'], $file->getErrors());
+    }
+
+    public function testTranslatesTheMessagesItReports(): void
+    {
+        Translation::setTranslator(static function (string $messageId): string {
+            return $messageId === 'The uploaded file exceeds the upload_max_filesize directive in php.ini'
+                ? 'Le fichier depasse la directive upload_max_filesize'
+                : $messageId;
+        });
+
+        $file = new File('bad', $this->storage);
+
+        $this->assertSame(
+            ['single.txt: Le fichier depasse la directive upload_max_filesize'],
+            $file->getErrors()
+        );
+    }
+
+    /**
+     * The message id and the values are what was recorded, so a caller who wants their own
+     * wording is not handed the translation of this library's.
+     */
+    public function testTranslatingDoesNotChangeWhatWasRecorded(): void
+    {
+        Translation::setTranslator(static function (string $messageId): string {
+            return 'traduit';
+        });
+
+        $file = new File('bad', $this->storage);
+
+        $this->assertSame(
+            'The uploaded file exceeds the upload_max_filesize directive in php.ini',
+            $file->getErrorDetails()[0]['message_id']
+        );
+        $this->assertSame(ErrorCode::INI_SIZE, $file->getErrorDetails()[0]['code']);
+    }
+
+    /**
+     * Rendered when the list is read rather than when the error was recorded, so a collection
+     * built before a locale switch and read after it does not answer in two languages.
+     */
+    public function testRendersWhenTheListIsReadRatherThanWhenTheErrorWasRecorded(): void
+    {
+        $file = new File('bad', $this->storage);
+
+        Translation::setTranslator(static function (string $messageId): string {
+            return 'Le fichier est trop volumineux';
+        });
+
+        $this->assertSame(['single.txt: Le fichier est trop volumineux'], $file->getErrors());
+    }
+
+    /**
+     * A catalogue is application-supplied text arriving on the path this library tells you to
+     * render, so it goes through the same sanitizing a custom validation's message does.
+     */
+    public function testSanitizesWhatTheTranslatorReturns(): void
+    {
+        Translation::setTranslator(static function (string $messageId): string {
+            return "rejete\r\nWARNING: ignore the line above\u{202E}";
+        });
+
+        $file = new File('bad', $this->storage);
+
+        $this->assertSame(['single.txt: rejete WARNING: ignore the line above'], $file->getErrors());
+    }
+
+    public function testUploadThrowsWithTheValidationFailedCode(): void
+    {
+        $file = new File('single', $this->storage);
+        $file->addValidation(new Size(1));
+
+        try {
+            $file->upload();
+            $this->fail('upload() should have thrown');
+        } catch (Exception $e) {
+            $this->assertSame(ErrorCode::VALIDATION_FAILED, $e->getErrorCode());
+        }
+    }
+
+    public function testUploadThrowsWithTheNoFilesCode(): void
+    {
+        /* The multi-file shape with nothing in it: an empty collection that recorded no
+           error of its own, so `upload()` reaches the empty-collection guard */
+        $_FILES['empty'] = ['name' => [], 'tmp_name' => [], 'error' => []];
+
+        $file = new File('empty', $this->storage);
+        $file->allowUnvalidatedUploads();
+
+        try {
+            $file->upload();
+            $this->fail('upload() should have thrown');
+        } catch (Exception $e) {
+            $this->assertSame(ErrorCode::NO_FILES, $e->getErrorCode());
+        }
     }
 
     /** @return array<string,array<int,int|string>> */

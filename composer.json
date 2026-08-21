@@ -39,19 +39,23 @@
   "autoload": {
     "psr-4": {
       "GravityPdf\\Upload\\": "src/Upload"
-    }
+    },
+    "files": [
+      "src/Upload/i18n.php"
+    ]
   },
   "scripts": {
     "check-syntax": "@php ./vendor/bin/parallel-lint --exclude .git --exclude vendor --exclude tools/phpstan/vendor --exclude tools/psr7-readme/vendor .",
-    "lint": "@php ./vendor/bin/phpcs --standard=PSR12 ./src/ ./tests/ ./tools/psr7-readme/verify.php",
-    "lint:fix": "@php ./vendor/bin/phpcbf --standard=PSR12 ./src/ ./tests/ ./tools/psr7-readme/verify.php",
+    "i18n:pot": "@php tools/i18n/generate-pot.php",
+    "lint": "@php ./vendor/bin/phpcs --standard=PSR12 ./src/ ./tests/ ./tools/i18n/ ./tools/psr7-readme/verify.php",
+    "lint:fix": "@php ./vendor/bin/phpcbf --standard=PSR12 ./src/ ./tests/ ./tools/i18n/ ./tools/psr7-readme/verify.php",
     "phpstan": [
       "@composer install --working-dir=tools/phpstan --no-interaction --quiet",
       "@php tools/phpstan/vendor/bin/phpstan analyse"
     ],
     "phpunit": "@php ./vendor/bin/phpunit",
     "psr7-readme": [
-      "@composer install --working-dir=tools/psr7-readme --no-interaction --quiet",
+      "@composer update --working-dir=tools/psr7-readme --no-interaction --quiet",
       "@php tools/psr7-readme/verify.php"
     ]
   },

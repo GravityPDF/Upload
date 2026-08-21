@@ -4,6 +4,7 @@ namespace GravityPdf\Upload\Validation;
 
 use GravityPdf\Upload\Exception;
 use GravityPdf\Upload\FileInfo;
+use GravityPdf\Upload\FileInfoInterface;
 use Yoast\PHPUnitPolyfills\TestCases\TestCase;
 
 class SizeTest extends TestCase
@@ -50,7 +51,7 @@ class SizeTest extends TestCase
     public function testInvalidFileSize(): void
     {
         $this->expectException(Exception::class);
-        $this->expectExceptionMessage('File size is too large. Must be less than or equal to: 400');
+        $this->expectExceptionMessage('File size is too large. Must be no more than 400 bytes');
 
         $file = new FileInfo($this->assetsDirectory . '/foo.txt', 'foo.txt');
         $validation = new Size(400);
@@ -60,7 +61,7 @@ class SizeTest extends TestCase
     public function testInvalidFileSizeWithHumanReadableArgument(): void
     {
         $this->expectException(Exception::class);
-        $this->expectExceptionMessage('File size is too large. Must be less than or equal to: 400');
+        $this->expectExceptionMessage('File size is too large. Must be no more than 400 bytes');
 
         $file = new FileInfo($this->assetsDirectory . '/foo.txt', 'foo.txt');
         $validation = new Size('400B');
@@ -84,5 +85,80 @@ class SizeTest extends TestCase
             $this->assertSame('File size could not be determined', $e->getMessage());
             $this->assertSame($file, $e->getFileInfo());
         }
+    }
+
+    /**
+     * The bound is stated in the largest unit it reaches, so a limit configured as `5M` reads
+     * back as `5 MB` rather than `5242880 bytes`. 1024-based, matching
+     * `File::humanReadableToBytes()`, which is what parsed it.
+     *
+     * The file's own size is stubbed rather than fixtured: the units worth checking start at a
+     * kilobyte and run to a gigabyte, and no assets directory should hold one.
+     *
+     * @dataProvider provideSizesAndTheirUnits
+     * @param int|string $limit
+     */
+    public function testStatesTheLimitInTheLargestUnitItReaches($limit, string $expected): void
+    {
+        $this->expectException(Exception::class);
+        $this->expectExceptionMessage($expected);
+
+        (new Size($limit))->validate($this->fileOfSize(PHP_INT_MAX));
+    }
+
+    /** @return array<string,array<int,int|string>> */
+    public function provideSizesAndTheirUnits(): array
+    {
+        return [
+            'gigabytes' => ['1G', 'File size is too large. Must be no more than 1 GB'],
+            'exact megabytes' => ['5M', 'File size is too large. Must be no more than 5 MB'],
+            'exact kilobytes' => ['500K', 'File size is too large. Must be no more than 500 KB'],
+            'a half kilobyte' => [1536, 'File size is too large. Must be no more than 1.5 KB'],
+            'under a kilobyte' => [400, 'File size is too large. Must be no more than 400 bytes'],
+        ];
+    }
+
+    /**
+     * A maximum rounds down and a minimum rounds up, so the number named is always one the
+     * file would pass at. 5,000,000 bytes is 4.768 MB: reported as `4.8 MB` a maximum would
+     * name a size that is still rejected.
+     */
+    public function testTheStatedLimitIsAlwaysOneTheFileWouldPassAt(): void
+    {
+        try {
+            (new Size(5000000))->validate($this->fileOfSize(PHP_INT_MAX));
+            $this->fail('Expected the file to be rejected');
+        } catch (Exception $e) {
+            $this->assertSame('File size is too large. Must be no more than 4.7 MB', $e->getMessage());
+        }
+
+        try {
+            (new Size(PHP_INT_MAX, 5000000))->validate($this->fileOfSize(1));
+            $this->fail('Expected the file to be rejected');
+        } catch (Exception $e) {
+            $this->assertSame('File size is too small. Must be at least 4.8 MB', $e->getMessage());
+        }
+    }
+
+    /** A file that answers one size and nothing else, since that is all `Size` reads */
+    private function fileOfSize(int $bytes): FileInfoInterface
+    {
+        $fileInfo = $this->createMock(FileInfoInterface::class);
+        $fileInfo->method('getSize')->willReturn($bytes);
+
+        return $fileInfo;
+    }
+
+    /**
+     * `scale()` is the seam for the one thing this library cannot do: pick a decimal
+     * separator, which needs a locale. An override owns the number and the unit together, so
+     * the message id chosen still names the unit the amount is in.
+     */
+    public function testASubclassCanFormatTheAmountItsOwnWay(): void
+    {
+        $this->expectException(Exception::class);
+        $this->expectExceptionMessage('File size is too large. Must be no more than 4,7 MB');
+
+        (new GermanSize(5000000))->validate($this->fileOfSize(PHP_INT_MAX));
     }
 }

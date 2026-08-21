@@ -1,5 +1,5 @@
 {
-    "description": "Runs the README's PSR-7 bridge against real PSR-7 implementations. Kept out of the root manifest so the library itself takes no PSR-7 dependency. Versions are pinned exactly: composer.lock is gitignored repo-wide, and a check that reads code out of README.md is not worth failing on somebody else's release. Bump them deliberately.",
+    "description": "Runs the README's PSR-7 bridge against real PSR-7 implementations. Kept out of the root manifest so the library itself takes no PSR-7 dependency. Versions are pinned exactly: composer.lock is gitignored repo-wide, and a check that reads code out of README.md is not worth failing on somebody else's release. Bump them deliberately. `composer psr7-readme` runs `update` rather than `install` for that reason too: the library is installed from a path repository, so a change to its own autoload configuration only reaches this vendor directory when the package is re-resolved. Pinned versions make that as deterministic as an install.",
     "require": {
         "gravitypdf/upload": "@dev",
         "nyholm/psr7": "1.8.2",

@@ -275,8 +275,10 @@ foreach ($list->getUploadedLocators() as $offset => $storedPath) {
 }
 ```
 
-`File::formatUploadFailure($clientFilename, $errorCode)` builds a `$failures` string on its
-own, for reporting failed transfers elsewhere.
+`$failures` takes the pairs themselves, not finished strings — the collection words them for
+you. `File::formatUploadFailure($clientFilename, $errorCode)` is for the other case: reporting
+a failed transfer somewhere that is not a `FileList` at all. Its return value is a rendered
+line, so passing it back into `$failures` raises `InvalidArgumentException`.
 
 #### Two decisions this path needs from you
 
@@ -284,7 +286,7 @@ On the `$_FILES` path PHP guarantees the file arrived in this request's `multipa
 body. It checks it twice: `is_uploaded_file()` on the way in, `move_uploaded_file()` on the way
 out. That is what stops a manipulated path storing `/etc/passwd` or another user's upload as a
 file of your own. Off that path PHP cannot make the guarantee, so both ends refuse the file
-until you replace them, and every upload fails with `Is not an uploaded file`.
+until you replace them, and every upload fails with `This file was not received as an upload`.
 
 **1. Say where the file came from.** Override `isUploadedFile()`, usually to check the path is
 inside a directory only your bridge writes to:
@@ -475,8 +477,10 @@ class MaxDimensions implements ValidationInterface
 
         if ($size['width'] > $this->maxWidth || $size['height'] > $this->maxHeight) {
             throw new Exception(
-                sprintf('Image must be no larger than %dx%d pixels', $this->maxWidth, $this->maxHeight),
-                $fileInfo
+                __('Image must be no larger than %1$sx%2$s pixels', 'my-plugin'),
+                $fileInfo,
+                'max_dimensions',
+                [$this->maxWidth, $this->maxHeight]
             );
         }
     }
@@ -487,6 +491,32 @@ $file->addValidation(new MaxDimensions(2048, 2048));
 
 Failures accumulate rather than abort: every validation runs against every file, and
 `getErrors()` reports them all at once.
+
+The message, its values and the code are kept apart rather than assembled here, so your rule
+behaves like a shipped one: the message goes through the
+[translator](#translating-error-messages) if one is installed, the values are interpolated
+after the lookup — a `%` in one can never be read as a conversion — and the code you chose
+shows up in `getErrorDetails()` for a caller branching on it. Pass a finished string with no
+values if you would rather; `getErrorDetails()` then reports the code
+`ErrorCode::VALIDATION_REJECTED` for it, so every entry has one.
+
+`__()` here is `GravityPdf\Upload\__()`, which marks the string for an extractor and hands it
+straight back. It is **not** WordPress's `__()` and it never translates. Using it is optional:
+add `use function GravityPdf\Upload\__;`, or leave the literal bare and use your own marker if
+your rule's wording lives in your own catalogue. Either way the string reaches the translator,
+since the marker returns its argument.
+
+The second argument names a catalogue for whatever reads these calls. The marker discards it
+and this library always looks a message up under `Translation::DOMAIN`, so it tells *your*
+extractor where the string belongs and nothing more; your translator closure decides where the
+lookup lands. It defaults to `Translation::DOMAIN`, and the library's own calls leave it off.
+
+If you do use the marker, import it in **every** file that calls it. PHP resolves an
+unqualified function call against the global namespace when the current one has no match, so in
+a WordPress plugin a missing import means `__()` reaches WordPress's function instead: no
+error, but the string is translated at the throw rather than at the render, and
+`Exception::getMessage()` stops being the English you search your log for. Fully qualified,
+`\GravityPdf\Upload\__('…')` cannot take that path, and `xgettext` extracts it just the same.
 
 Your message goes through `Filename::sanitizeForDisplay()` first: bidi controls are deleted,
 runs of control characters collapse to a single space, surrounding whitespace is trimmed, and
@@ -539,6 +569,218 @@ class ObjectStorage implements StorageInterface
 The protections under "Security notes" (the deny-list, the `basename()` reduction, the
 symlink refusal, the staged write) live in `Storage\FileSystem`. A custom backend needs its
 own equivalents.
+
+## Translating error messages
+
+No translations ship with this library, and none are needed to use it: with no translator
+installed every message is the English string it has always been. Install one and the
+messages `getErrors()` returns are looked up through it.
+
+```php
+use GravityPdf\Upload\Translation;
+
+Translation::setTranslator(static function (string $text, string $domain): string {
+    return $myCatalogue->lookup($text);
+});
+```
+
+The English source string **is** the message id, which is also the gettext msgid, so a lookup
+that finds nothing returns what this library would have said anyway. The translator receives
+the string and the library's text domain and nothing else: values are interpolated on this side
+of the seam, after the lookup, so a filename or a configured limit containing `%` can never be
+read as a `printf` conversion. Register it once, wherever you bootstrap. It is consulted when a
+message is rendered, so a translator that reads the current locale still answers correctly
+after a mid-request switch.
+
+In the source, each translatable string is marked rather than translated where it is written —
+gettext's `N_()` idiom, under a more familiar name:
+
+```php
+throw new Exception(
+    /* translators: %1$s: the largest accepted size, in bytes */
+    __('File size is too large. Must be no more than %1$s MB'),
+    $fileInfo,
+    ErrorCode::SIZE_TOO_LARGE,
+    [$this->maxSize]
+);
+```
+
+`__()` returns its argument: it marks the string for an extractor and nothing more, domain
+included. Keeping the lookup at one chokepoint is what lets `Exception::getMessage()` stay
+English for your log, keeps the untranslated msgid in `getErrorDetails()`, and means the locale
+that matters is the one in force when the message is read rather than when the file was
+rejected.
+
+A broken catalogue cannot break an upload. A translator that throws, returns a non-string, or —
+where there are values to fill — returns a template whose placeholders do not match the
+source's is ignored in favour of the English. A message with no values is handed back whole
+whatever the catalogue says, since there is no interpolation for a mismatch to spoil.
+
+### What is translated, and what is not
+
+`getErrors()` — the list the README tells you to render — and nothing else. In particular
+`Exception::getMessage()` is always English, including the messages `Storage\FileSystem`
+throws. Those name the destination and exist for your log; showing one to whoever submitted
+the file [hands them an existence oracle for the upload directory](#security-notes). An
+exception is also what you search a log for, which it stops being once translated. To show one
+in the end user's language, render it from `getMessageId()` and `getMessageArgs()`.
+
+### The catalogue
+
+`i18n/upload.pot` lists every string that gets looked up, with translator comments for the
+ones carrying placeholders. It is a template — there are no `.po` or `.mo` files here. Seed
+your own catalogue from it and merge it forward when you update the library:
+
+```bash
+msgmerge --update my-plugin.po vendor/gravitypdf/upload/i18n/upload.pot
+```
+
+Or generate your own from the installed source. One flag names the marker, and you need to
+know nothing else about this library:
+
+```bash
+xgettext --language=PHP --keyword=__ --add-comments=translators: \
+    -o my-plugin.pot $(find vendor/gravitypdf/upload/src -name '*.php')
+```
+
+Message wording is API: changing it is a breaking change and appears in
+[CHANGELOG.md](CHANGELOG.md), so a reworded message shows up as an untranslated string rather
+than silently reverting to English.
+
+### Using an existing translation library
+
+The seam is a plain `callable`, so it fits whatever you already run and costs this library
+nothing: `ext-fileinfo` and no packages. It loads no catalogue, chooses no locale, and has no
+plural forms to pluralise — your application is already doing all of that, and one lookup is
+what is left. All three below hand back the string they were given when a lookup finds nothing,
+which is what the seam expects.
+
+[Symfony](https://symfony.com/doc/current/translation.html). `Translation::DOMAIN` maps straight
+onto a Symfony translation domain, so `translations/gravitypdf-upload.es.xlf` is found with no
+further wiring:
+
+```php
+Translation::setTranslator(
+    static function (string $text, string $domain) use ($translator): string {
+        return $translator->trans($text, [], $domain);
+    }
+);
+```
+
+[Laravel](https://laravel.com/docs/localization). JSON language files are keyed by the source
+string, which is what a msgid is, so `lang/es.json` needs no mapping of its own:
+
+```php
+Translation::setTranslator(static function (string $text): string {
+    return \__($text);
+});
+```
+
+[php-gettext](https://github.com/php-gettext/Translator), reading a `.mo` compiled from the
+catalogue above:
+
+```php
+use Gettext\Loader\MoLoader;
+use Gettext\Translator;
+
+$gettext = Translator::createFromTranslations((new MoLoader())->loadFile('es.mo'));
+
+Translation::setTranslator(static function (string $text) use ($gettext): string {
+    return $gettext->gettext($text);
+});
+```
+
+WordPress needs one more step, for a reason unrelated to the runtime. It has its own section
+below.
+
+### WordPress
+
+The runtime side is four lines:
+
+```php
+Translation::setTranslator(static function (string $text, string $domain): string {
+    /* phpcs:ignore WordPress.WP.I18n.NonSingularStringLiteralText -- ids come from the catalogue */
+    return \__($text, 'my-plugin');
+});
+```
+
+**The leading backslash is doing work.** If the file holding this closure also writes a
+validation of your own, it will have imported this library's marker — and `__($text,
+'my-plugin')` would then resolve to the marker, which hands back its argument. The translator
+becomes a permanent no-op, silently, and every message stays English. `\__()` is unambiguously
+WordPress's. The same applies anywhere you call WordPress's `__()` in a file that imports the
+marker.
+
+Extraction is one command. `wp i18n make-pot` never looks inside `vendor/`, so merge this
+library's catalogue into yours as you build it:
+
+```bash
+wp i18n make-pot . languages/my-plugin.pot \
+    --merge=vendor/gravitypdf/upload/i18n/upload.pot
+```
+
+The msgids land in your project under your own text domain, and from there it is your ordinary
+translation pipeline — nothing about this library is special:
+
+```bash
+msginit --locale=de_DE --input=languages/my-plugin.pot \
+    --output=languages/my-plugin-de_DE.po
+# translate, then:
+msgfmt --check --output-file=languages/my-plugin-de_DE.mo languages/my-plugin-de_DE.po
+```
+
+```php
+load_plugin_textdomain('my-plugin', false, 'my-plugin/languages');
+```
+
+Re-merge when you update this library. A message that was reworded appears as a new untranslated
+string rather than silently reverting to English, because the wording is API here and a change to
+it is in [CHANGELOG.md](CHANGELOG.md).
+
+**Plugins distributed on wordpress.org are not covered by this.** translate.wordpress.org builds
+a plugin's GlotPress project by running `wp i18n make-pot` over your source itself — it does not
+read the `.pot` you ship, and it cannot be pointed at `vendor/`, since `--exclude` merges into
+the default rather than replacing it and the importer passes no path arguments at all. So these
+strings never reach GlotPress, and shipping your own `.mo` alongside a language pack does not
+help either: `WP_Textdomain_Registry` searches `WP_LANG_DIR/plugins` before a plugin's own
+directory and stops at the first match, so the language pack wins for every locale it covers.
+
+Getting them into a wordpress.org project means writing the msgids into your own tree as literal
+`__()` calls under your own domain, in a file nothing ever includes — gettext resolves by msgid
+and domain rather than by declaring file, so the runtime lookup finds them. WordPress.org does
+this for itself in `plugin-directory`'s `static_strings()` and the generated
+`extra/translation-strings.php` of several of its repositories. `i18n/upload.pot` has everything
+such a file would need; generating it is a dozen lines and this library does not ship them.
+
+### Reacting to a failure rather than showing it
+
+Messages are for reading. To branch on *why* a file was rejected, use the error code, which is
+stable across releases in a way the wording is not:
+
+```php
+use GravityPdf\Upload\ErrorCode;
+
+foreach ($file->getErrorDetails() as $error) {
+    if ($error['code'] === ErrorCode::SIZE_TOO_LARGE) {
+        $response['retry_with_smaller_file'] = true;
+    }
+}
+```
+
+Each entry carries `code`, the untranslated `message_id` and its `args`, the sanitized
+`filename` the failure was about (`null` where it was not about one file), and `message`, the
+finished line `getErrors()` returns. The `message_id` and `args` are there so you can render
+the message with your own wording and never touch this library's translator:
+
+```php
+$message = sprintf(\__($error['message_id'], 'my-plugin'), ...$error['args']);
+```
+
+Guard that `sprintf()` if the catalogue is not yours to trust: a translation whose placeholders
+do not match throws `ArgumentCountError` on PHP 8, on the failure path. `Translation::render()`
+does this for you and falls back to the English.
+
+`Exception::getErrorCode()` answers the same codes for a throw, including from storage.
 
 ## Security notes
 
@@ -663,6 +905,7 @@ php.ini, and `InvalidArgumentException` when the key is not in `$_FILES`.
 | `getValidations(): ValidationInterface[]` | The rules added so far. |
 | `isValid(): bool` | Runs `is_uploaded_file()` plus every validation against every file, accumulating failures. Each call resets the error list and re-validates, so it is idempotent. |
 | `getErrors(): string[]` | All failures from the last validation run (`isValid()`, `upload()` or `uploadValid()`) plus any files that failed to transfer, as `"filename: message"`. A `$_FILES` entry too malformed to name a file is reported without the prefix. Sanitized, but must still be escaped on output. |
+| `getErrorDetails(): array` | The same failures as their parts: `code` (an [`ErrorCode`](#errorcode) constant, stable across releases), the untranslated `message_id` and its `args`, the sanitized `filename` or `null`, and the finished `message`. For branching on a failure, or rendering it with your own wording. |
 | `upload(): bool` | Re-validates, then stores each file via the storage backend. All-or-nothing: one file failing validation stores none of them; call `uploadValid()` in its place to store the ones that passed. Throws `LogicException` when no validations are configured, and `Exception` when validation fails (details in `getErrors()`), when the collection is empty, or when storage fails (details in the exception message). |
 | `uploadValid(): bool` | Re-validates, then stores only the files that passed, leaving the rest in `getErrors()`. Use it in place of `upload()` on a multi-file field where a partial batch is acceptable. Returns `true` when every file was stored and `false` when at least one was rejected, counting a file that failed to transfer. Nothing throws for a rejected file, so that return value is the only signal, and cleaning up what was already stored is yours on the `false` branch. Throws the same `LogicException` with no validations configured, the same `Exception` on an empty collection, and whatever storage throws. |
 | `getUploadedLocators(): string[]` | Locators returned by the most recent `upload()` or `uploadValid()`, in whatever form the storage backend defines. Multi-file uploads are not atomic, so after a failure this is what needs rolling back. Keyed by collection offset, so the array is sparse after `uploadValid()` and the locator at `$i` still belongs to `$file[$i]`. |
@@ -673,7 +916,7 @@ php.ini, and `InvalidArgumentException` when the key is not in `$_FILES`.
 | `beforeUpload(callable $callback): File` | Hook run per file before storage. |
 | `afterUpload(callable $callback): File` | Hook run per file after storage. |
 | `File::humanReadableToBytes(string $input): int` | Static helper that converts `'5M'` to `5242880`. Accepts B/K/M/G with an optional trailing `B`, and fractions like `'0.5M'`. Throws `InvalidArgumentException` on unparseable input. |
-| `File::formatUploadFailure(string $clientFilename, int $errorCode): string` | Static: the `getErrors()` string for a file that never arrived, from a client-supplied name and an `UPLOAD_ERR_*` code. Sanitizes the name as the `$_FILES` path does. For callers building a [`FileList`](#filelist) from a source of their own; a code with no message of its own reads as `Unknown Error`. |
+| `File::formatUploadFailure(string $clientFilename, int $errorCode): string` | Static: the `getErrors()` string for a file that never arrived, from a client-supplied name and an `UPLOAD_ERR_*` code. Sanitizes the name as the `$_FILES` path does. For reporting a failed transfer outside any collection — a [`FileList`](#filelist)'s `$failures` takes the pairs and words them itself, so it does not need this. A code with no message of its own reads as `Unknown error`. |
 
 `File` also implements `Countable`, `ArrayAccess` and `IteratorAggregate` over its
 `FileInfoInterface` objects, and forwards any other method call to them: with one file the
@@ -741,9 +984,32 @@ Each implements `ValidationInterface` and throws `Exception` on failure.
 |---|---|
 | `Validation\FileType($extensions, $mimetypes)` | Requires the file's extension and its sniffed contents to describe the same format. Either argument accepts a string or an array; chain `allow($extensions, $mimetypes)` to accept additional formats, one format per call. |
 | `FileType::getAllowedTypes(): array<string, string[]>` | The media types allowed for each extension, as configured. |
-| `Validation\Size($maxSize, $minSize = 0)` | Inclusive size bounds, as bytes or human-readable strings (`'5M'`). |
+| `Validation\Size($maxSize, $minSize = 0)` | Inclusive size bounds, as bytes or human-readable strings (`'5M'`). The message states the bound in the largest of bytes/KB/MB/GB it reaches, rounding a maximum down and a minimum up so the size named is always one the file would pass at. |
 | `Validation\Extension($extensions)` | **Deprecated** since 4.0.0. Checks the extension alone, which says nothing about the contents. Use `FileType`. |
 | `Validation\Mimetype($mimetypes)` | **Deprecated** since 4.0.0. Checks the sniffed type alone, which a polyglot file satisfies trivially. Use `FileType`. |
+
+#### Stating a size in a locale
+
+`Validation\Size` writes `4.7 MB`, with a `.`, because choosing a separator needs a locale and
+this library takes none. `scale()` is the seam for that — it picks both the number and the
+unit, and is called through `static::`:
+
+```php
+class LocalisedSize extends Size
+{
+    protected static function scale(int $bytes, bool $down): array
+    {
+        list($amount, $unit) = parent::scale($bytes, $down);
+
+        return [number_format_i18n((float) $amount, 1), $unit];
+    }
+}
+```
+
+Return a unit key that `getTooLargeMessages()` and `getTooSmallMessages()` both hold — `'B'`,
+`'KB'`, `'MB'` or `'GB'` — or override those too, since the unit is named inside the message
+rather than interpolated into it. It rarely comes up: `'5M'`, `'500K'` and any binary byte
+count divide exactly into the 1024-based ladder and render as whole numbers.
 
 ### Filename
 
@@ -763,8 +1029,62 @@ a public extension point and inventing a filename is not storage's job.
 ### Exception
 
 `GravityPdf\Upload\Exception` extends `\RuntimeException` and is thrown by validations, storage and
-`File::upload()`. `getFileInfo(): ?FileInfoInterface` returns the offending file, so a caller
-can tell which file in a multi-file upload failed.
+`File::upload()`.
+
+| Method | Description |
+|---|---|
+| `getFileInfo(): ?FileInfoInterface` | The offending file, so a caller can tell which file in a multi-file upload failed. `null` where the failure is not about one file. |
+| `getErrorCode(): string` | The [`ErrorCode`](#errorcode) constant naming why this was thrown, or `ErrorCode::NONE` for a throw of your own that named none. Branch on this rather than on the message. |
+| `getMessageId(): string` | The message with its placeholders still in it — the gettext msgid. |
+| `getMessageArgs(): array` | The values those placeholders take. |
+
+`getMessage()` is always English, composed from those two: it is what you log, and
+[never translated](#what-is-translated-and-what-is-not).
+
+The constructor is `__construct(string $message, ?FileInfoInterface $fileInfo = null, string
+$errorCode = ErrorCode::NONE, array $messageArgs = [], int $code = 0, ?Throwable $previous =
+null)`. A validation of your own can pass a message id and its values rather than a finished
+string, and they reach `getErrorDetails()` intact.
+
+### Translation
+
+`GravityPdf\Upload\Translation` holds the hook described under
+[Translating error messages](#translating-error-messages).
+
+| Method | Description |
+|---|---|
+| `Translation::setTranslator(callable $translator): void` | Install `function (string $text, string $domain): string`. Process-wide, and read at render time. The domain is always `Translation::DOMAIN`; ignore it and look the string up in your own. |
+| `Translation::resetTranslator(): void` | Remove it, returning every message to its English source. Tests that install one need this in teardown; a static is not covered by PHPUnit's `backupGlobals`. |
+| `Translation::hasTranslator(): bool` | Whether one is installed. Worth checking before you install yours: the translator is process-wide and last writer wins, so two plugins sharing an unprefixed `vendor/` would otherwise look each other's upload errors up in the wrong catalogue. |
+| `Translation::translate(string $text, string $domain = self::DOMAIN): string` | The lookup on its own. Returns the English if the translator throws or returns a non-string. |
+| `Translation::render(string $messageId, array $args = []): string` | Translate, then interpolate. What `File` calls when it renders `getErrors()`. |
+| `Translation::interpolate(string $template, array $args = []): string` | The interpolation without the lookup, falling back to the template when the values do not fit. What `Exception` composes its English message with. |
+| `Translation::DOMAIN` | `'gravitypdf-upload'`. Fixed: WordPress forbids a variable text domain, and no extractor can follow one. |
+
+`GravityPdf\Upload\__(string $text, string $domain = Translation::DOMAIN): string` is the
+marker, not a method — gettext's `N_()` idiom under a familiar name and shape, returning
+`$text` so an extractor records the msgid while the lookup happens elsewhere. It is not
+WordPress's `__()`, it never translates, and the two coexist. The domain is discarded: it
+describes the string to your extractor, and this library's own lookup always uses
+`Translation::DOMAIN`. Optional, as it is on WordPress's `__()`; the calls in `src` omit it. Outside the library's own namespace, import it with
+`use function GravityPdf\Upload\__;` or call it fully qualified; an unqualified call with
+neither falls back to the global `__()`.
+
+### ErrorCode
+
+`GravityPdf\Upload\ErrorCode` is a class of string constants naming every failure this library
+reports: the eight `UPLOAD_ERR_*` outcomes (`INI_SIZE`, `FORM_SIZE`, `PARTIAL`, `NO_FILE`,
+`NO_TMP_DIR`, `CANT_WRITE`, `EXTENSION_STOPPED`, `UNKNOWN_TRANSFER_ERROR`), the collection's
+own (`MALFORMED_UPLOAD`, `NOT_AN_UPLOADED_FILE`, `VALIDATION_REJECTED`,
+`VALIDATION_INCOMPLETE`, `VALIDATION_FAILED`, `NO_FILES`), the shipped validations'
+(`SIZE_UNKNOWN`, `SIZE_TOO_SMALL`, `SIZE_TOO_LARGE`, `EXTENSION_NOT_ALLOWED`,
+`MIMETYPE_NOT_ALLOWED`, `FILE_CONTENTS_MISMATCH`) and storage's (`DESTINATION_IS_SYMLINK`,
+`DESTINATION_EXISTS`, `DESTINATION_NOT_CREATED`, `INVALID_DESTINATION_NAME`,
+`BLOCKED_EXTENSION`, `MOVE_FAILED`, `CHMOD_FAILED`, `STAGING_NAME_FAILED`). `ErrorCode::NONE`
+is the empty string, which is what a throw of your own that named no code answers.
+
+`ErrorCode::forUploadError(int $errorCode): string` maps an `UPLOAD_ERR_*` constant to its
+code.
 
 ### Interfaces
 
