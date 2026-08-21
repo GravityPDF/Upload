@@ -1,0 +1,78 @@
+name: README translator adapters
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# The workflows only read the repository; nothing needs a write-capable GITHUB_TOKEN.
+permissions:
+  contents: read
+
+# Cancels all previous workflow runs for pull requests that have not completed.
+concurrency:
+  # The concurrency group contains the workflow name and the branch name for pull requests
+  # or the commit hash for any other events.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: true
+
+# The README tells a PSR-7 caller to write a bridge, so that code has to keep working. This runs
+# the README's own snippets — read out of the file, not copied — against two real PSR-7
+# implementations. Their versions live in tools/psr7-readme/composer.json so the library itself
+# continues to require nothing but ext-fileinfo.
+jobs:
+  run:
+    name: PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The ends of the supported range: the documented code has to run on both. One
+        # pinned set of libraries resolves on each — illuminate/translation 8.x is the
+        # newest that still installs on 7.3.
+        php: [ '7.3', '8.5' ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.0
+
+      - name: Install PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.35.5
+        with:
+          php-version: ${{ matrix.php }}
+
+      # The pages document msginit/msgfmt/msgmerge, and the check runs those rather than
+      # approximating them, so the pipeline a reader follows is the one that gets tested.
+      - name: Install gettext
+        run: sudo apt-get install --yes --no-install-recommends gettext
+
+      - name: Run the documented translator adapters
+        run: composer translator-readme
+
+  wordpress:
+    name: WordPress pipeline
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.0
+
+      - name: Install PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.35.5
+        with:
+          php-version: '8.5'
+
+      - name: Install gettext
+        run: sudo apt-get install --yes --no-install-recommends gettext
+
+      # `wp i18n make-pot` runs on the before_wp_load hook, so this needs wp-cli but no
+      # WordPress install and no database.
+      - name: Install wp-cli
+        run: |
+          curl -sSLo /usr/local/bin/wp \
+            https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+          chmod +x /usr/local/bin/wp
+          wp --version
+
+      - name: Run the documented WordPress pipeline
+        run: bash tools/translator-readme/wordpress.sh

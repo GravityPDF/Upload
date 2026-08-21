@@ -33,30 +33,26 @@ declare(strict_types=1);
 
 namespace GravityPdf\Upload;
 
-/* Two copies in one process — an unprefixed `vendor/` shared between plugins — would be a
-   fatal redeclaration, where two copies of a class are harmless. */
+/* Two copies of this library in one process — an unprefixed `vendor/` shared between plugins
+   — would be a fatal redeclaration. Two copies of a class are harmless; a function is not. */
 if (!function_exists('GravityPdf\Upload\__')) {
     /**
      * Mark a string for the catalogue without translating it
      *
-     * gettext's `N_()` under a familiar name: it returns `$text`, and the lookup happens once,
-     * where `File` renders `getErrors()`. That keeps `Exception::getMessage()` English, keeps
-     * the untranslated msgid in `getErrorDetails()`, and takes the locale when the message is
-     * read rather than when the file was rejected. `xgettext -k__:1` finds every call.
+     * gettext's `N_()` under a more familiar name: it returns `$text` unchanged. `File` does
+     * the lookup later, when it renders `getErrors()`. That is what keeps
+     * `Exception::getMessage()` in English and the raw msgid in `getErrorDetails()`.
      *
-     * Namespaced, so it coexists with WordPress's global `__()` rather than colliding. PHP
-     * resolves an unqualified call against the global namespace when the current one has no
-     * match, though, so a file outside `GravityPdf\Upload` that omits `use function
-     * GravityPdf\Upload\__;` reaches WordPress's function instead — no error, and the string
-     * is translated at the throw. `I18nTest` reads `src/` to catch that. A fully qualified
-     * `\GravityPdf\Upload\__()` cannot take that path and extracts the same.
+     * **Not WordPress's `__()`.** The two coexist, but PHP falls back to the global namespace
+     * when the current one has no match, so a file outside `GravityPdf\Upload` that forgets
+     * `use function GravityPdf\Upload\__;` calls WordPress's instead and translates too
+     * early. `I18nTest` checks `src/` for that. `\GravityPdf\Upload\__()` cannot go wrong.
      *
-     * `$domain` is discarded. It describes the string to your extractor; the runtime lookup
-     * always uses `Translation::DOMAIN`. Optional, as on WordPress's `__()`. Extraction reads
-     * the first argument only — `-k__:1,2` would read this one as a plural and find nothing.
+     * `$domain` is discarded — the lookup always uses `Translation::DOMAIN` — and is there for
+     * your extractor. Extraction reads the first argument only; `-k__:1,2` finds nothing.
      *
-     * @param string $text   The English source string, which is also the gettext msgid
-     * @param string $domain The catalogue the string belongs to, for whatever reads these calls
+     * @param string $text   The English string, which is also the gettext msgid
+     * @param string $domain The catalogue the string belongs to, for tooling that reads these
      */
     function __(string $text, string $domain = Translation::DOMAIN): string
     {

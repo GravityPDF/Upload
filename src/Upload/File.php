@@ -277,16 +277,15 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     }
 
     /**
-     * Translate a recorded failure's parts into the line `getErrors()` returns
+     * Turn a recorded failure's parts into the line `getErrors()` returns
      *
-     * The one place that composition happens, for `getErrorDetails()` and for
-     * `formatUploadFailure()`. Written out twice, they were two copies of it.
+     * The only place that happens. `getErrorDetails()` and `formatUploadFailure()` both use
+     * it; they used to hold a copy each.
      *
-     * The message is text this library did not necessarily write — a translation, or a custom
-     * validation's — so it is sanitized before the filename goes in front of it, and a message
-     * opening with a line break does not read as `file.txt:  message`. Sanitized again once
-     * assembled: the filename arrives clean, but that is its caller's doing, and this is where
-     * the guarantee that every string here is displayable lives.
+     * The message may be text this library did not write — a translation, or a custom
+     * validation's — so it is sanitized before the filename is put in front of it. Otherwise a
+     * message starting with a line break reads as `file.txt:  message`. It is sanitized again
+     * afterwards, which is what guarantees every string here is safe to display.
      *
      * @param array<int,string|int|float> $args Values for the message id's placeholders
      * @phpstan-param list<string|int|float> $args
@@ -530,17 +529,17 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     /**
      * Record one string for `getErrors()`
      *
-     * The one way anything reaches the error list, so the guarantee `getErrors()` carries —
-     * every string in it sanitized — belongs to this method rather than to every call site
-     * remembering. Most sites pass a literal this library wrote, where sanitizing is a no-op;
-     * the point is that a site added later cannot be the one that forgets.
+     * The only way into the error list. `getErrors()` promises every string in it is
+     * sanitized, and that promise lives here rather than at each call site. Most sites pass a
+     * literal this library wrote, where sanitizing does nothing; the point is that a site
+     * added later cannot forget.
      *
-     * The display half only. A filename is put through `Filename::sanitizeNameWithExtension()`
-     * by the caller instead, since those are the naming rules and this is prose: running both
-     * here would report `user.avatar` as `user-avatar`.
+     * Prose only. Filenames go through `Filename::sanitizeNameWithExtension()` at the call
+     * site instead, because those are the naming rules: applying them here would turn
+     * `user.avatar` into `user-avatar`.
      *
-     * `protected` because a `File` subclass has its own reasons to report a failure, and the
-     * only way in since `$errorDetails` became `private` in 4.0.0.
+     * `protected` so a `File` subclass can report failures of its own. It has been the only
+     * way in since `$errorDetails` became `private` in 4.0.0.
      *
      * @param string $messageId The English message, or a message id whose `%1$s` placeholders
      *                          `$args` fills. Marked with `__()` at the call site, not

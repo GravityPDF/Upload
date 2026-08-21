@@ -37,21 +37,19 @@ use RuntimeException;
 use Throwable;
 
 /**
- * The hook a developer installs to translate the strings this library shows an end user
+ * Where a developer plugs in their own translations
  *
- * No translations ship. The English source string is the message id, so an install that never
- * calls `setTranslator()` produces the bytes it produced before this class existed.
+ * No translations ship. The English string is the message id, so with no translator installed
+ * every message reads as it always has.
  *
- * Call sites mark their strings with `GravityPdf\Upload\__()`; `File` renders them here. The
- * callable receives a string and a text domain, never the values interpolated into the string:
- * a filename or a configured limit containing `%` would be read as a conversion if it reached
- * a `printf` format position.
+ * The callable is given a string and a text domain. It is never given the values that go into
+ * the string. Those are interpolated afterwards, so a filename containing `%` cannot be read
+ * as a `printf` conversion.
  *
- * Everything the translator does is absorbed, `LogicException` included — the one place in this
- * library where that type is not re-thrown. An untranslated message is a correct outcome, and
- * the alternative is a broken catalogue turning a rejected upload into a fatal error on the
- * failure path. `Filename::sanitizeForDisplay()` still runs over the result where `File`
- * records it, so a catalogue sits inside the same boundary a custom validation's message does.
+ * Anything the translator throws is swallowed, `LogicException` included. This is the only
+ * place in the library that does not re-throw it. A broken catalogue should leave the message
+ * in English, not turn a rejected upload into a fatal error. A translator answering with an
+ * empty string, or with something that is not a string, is ignored the same way.
  *
  * @since   4.0.0
  *
@@ -60,11 +58,11 @@ use Throwable;
 final class Translation
 {
     /**
-     * The text domain this library's own strings belong to
+     * The text domain for this library's strings
      *
-     * Fixed rather than injectable: WordPress forbids a variable text domain, and no extractor
-     * can follow one. A consumer's translator receives it and is free to ignore it, which is
-     * what the WordPress recipe does — it looks the string up in the plugin's own domain.
+     * Not configurable. WordPress forbids a variable text domain and no extractor can follow
+     * one. Your translator is handed it and may ignore it; the WordPress recipe does, looking
+     * the string up in the plugin's own domain instead.
      */
     public const DOMAIN = 'gravitypdf-upload';
 
@@ -74,10 +72,10 @@ final class Translation
     private static $translator;
 
     /**
-     * Install the callable that turns a message id into text for the current locale
+     * Install the callable that looks a message id up
      *
-     * Process-wide, and read when a message is rendered rather than when it is installed, so a
-     * translator that consults the locale still answers correctly after a mid-request switch.
+     * Process-wide. It is called when a message is rendered, not when it is installed, so a
+     * locale switched mid-request still gives the right answer.
      *
      * @param callable $translator `function (string $text, string $domain): string`
      * @phpstan-param callable(string,string):string $translator
@@ -88,9 +86,9 @@ final class Translation
     }
 
     /**
-     * Remove the installed translator, returning every message to its English source
+     * Remove the translator, putting every message back to English
      *
-     * A test that installs one needs this in `tear_down()`: `backupGlobals` does not cover a
+     * Call this in `tear_down()` if a test installs one. `backupGlobals` does not cover a
      * static property.
      */
     public static function resetTranslator(): void
@@ -105,7 +103,7 @@ final class Translation
     }
 
     /**
-     * Look one string up, without interpolating anything into it
+     * Look one string up. Nothing is interpolated into it.
      *
      * @param string $text The English source string, which is also the gettext msgid
      */
@@ -121,18 +119,23 @@ final class Translation
             return $text;
         }
 
-        /* A translator is not required to return a string. WordPress runs every lookup
-           through the `gettext` filter, which is any plugin in the process. */
-        return is_string($translated) ? $translated : $text;
+        /* Translators do not have to return a string. WordPress passes every lookup through
+           the `gettext` filter, which is any plugin in the process.
+
+           An empty string counts as no translation, which is what an empty `msgstr` means in
+           gettext. Not every loader applies that rule: Symfony's `PoFileLoader` reads a
+           partly-translated `.po` into one catalogue entry per msgid, empty ones included, so
+           `trans()` answers `''` for anything not yet done. Rendering that would blank the
+           message instead of falling back to English. */
+        return is_string($translated) && $translated !== '' ? $translated : $text;
     }
 
     /**
-     * How many `printf` conversions a template carries
+     * Count the `printf` conversions in a template
      *
-     * `%%` does not match: the pattern requires a conversion letter, and `%` is not one. A
-     * space is a legal flag, so the `% o` in `50% of your quota` does count as one. That is
-     * not an over-count — `vsprintf()` raises on that string — and `render()` is where it is
-     * kept from doing harm.
+     * `%%` does not match — the pattern needs a conversion letter. A space is a valid flag, so
+     * `% o` in `50% of your quota` does count as one. `vsprintf()` agrees, and `render()` is
+     * what stops that mattering.
      */
     private static function countPlaceholders(string $template): int
     {
@@ -140,11 +143,11 @@ final class Translation
     }
 
     /**
-     * Translate a message id and fill its placeholders
+     * Translate a message id and fill in its placeholders
      *
-     * What `File` calls when it renders `getErrors()`. Two steps, each failing safely on its
-     * own: a translation that cannot carry the values falls back to the English here, and an
-     * unusable set of values falls back to the template at the interpolation.
+     * `File` calls this when rendering `getErrors()`. Each step falls back on its own: an
+     * unusable translation reverts to English here, and values that do not fit revert to the
+     * template at the interpolation.
      *
      * @param string $messageId The English source string, which is also the gettext msgid
      * @param array<int,string|int|float> $args Values for its `%1$s` placeholders
@@ -154,11 +157,10 @@ final class Translation
     {
         $template = self::translate($messageId);
 
-        /* Mismatched conversions would fill the wrong values in, or leave one out — but only
-           where there are values to fill. With none, `interpolate()` hands the template back
-           untouched, so checking then could only reject a good translation: `50% of your quota
-           is used` carries one conversion by PHP's grammar and its German counterpart carries
-           none. Hence here rather than at the lookup. */
+        /* Only worth checking when there are values to fill. With none, `interpolate()`
+           returns the template untouched, so the check could only reject a good translation:
+           `50% of your quota is used` counts one conversion by PHP's grammar, and its German
+           translation counts none. */
         if ($args !== [] && self::countPlaceholders($template) !== self::countPlaceholders($messageId)) {
             $template = $messageId;
         }
@@ -167,16 +169,13 @@ final class Translation
     }
 
     /**
-     * Fill a template's placeholders with their values
+     * Fill a template's placeholders
      *
-     * Always after the lookup, so a `%` in a filename or a configured bound cannot be read as
-     * a conversion specifier.
+     * Always after the lookup, so a `%` in a filename or a size bound is never read as a
+     * conversion.
      *
-     * A template with no values is not a format string at all, which matters for a message
-     * this library did not write: a validation of your own reporting `50% of your quota is
-     * used` has to survive intact. It is not free of conversions — PHP reads `% o` as a space
-     * flag and an octal, and `vsprintf()` raises — so the short-circuit is what keeps it
-     * whole, not the absence of a `%`.
+     * With no values the template is returned untouched and never reaches `vsprintf()`, which
+     * would raise on a message like `50% of your quota is used`.
      *
      * @param array<int,string|int|float> $args
      * @phpstan-param list<string|int|float> $args
@@ -191,21 +190,17 @@ final class Translation
     }
 
     /**
-     * `vsprintf()` that answers null rather than failing, across the supported range
+     * `vsprintf()` that returns null instead of failing, on every supported PHP version
      *
-     * An application-supplied catalogue can carry a template the values do not fit: too few
-     * placeholders, or a specifier PHP does not know. Both ends of the supported range are
-     * handled here so neither reaches a caller, the same reason `Filename::forceValidUtf8()`
-     * owns its own guard.
+     * The catalogue comes from the application and can hold a template the values do not fit.
      *
      * @param array<int,string|int|float> $args
      */
     private static function format(string $template, array $args): ?string
     {
-        /* Converted rather than suppressed: 7.3 and 7.4 warn and return `false`, which a
-           `string` return type turns into a `TypeError` one frame out, while PHP 8 throws.
-           One mechanism for both, so neither end of the range puts a fatal on the failure
-           path. */
+        /* PHP 7.3 and 7.4 warn and return `false`, which a `string` return type turns into a
+           `TypeError` one frame out. PHP 8 throws instead. Converting the warning handles
+           both the same way. */
         set_error_handler(static function (int $severity, string $message): bool {
             throw new RuntimeException($message);
         });

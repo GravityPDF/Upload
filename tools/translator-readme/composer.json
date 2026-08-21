@@ -1,0 +1,21 @@
+{
+    "description": "Runs the README's translator adapters against the real libraries they document. Kept out of the root manifest so the library itself takes no translation dependency — the whole point of the seam being a plain callable. Versions are pinned exactly, for the reason tools/psr7-readme pins its own: composer.lock is gitignored repo-wide, and a check that reads code out of README.md should not fail on somebody else's release. `composer translator-readme` runs `update` rather than `install` because the library is installed from a path repository, so a change to its own autoload configuration only reaches this vendor directory when the package is re-resolved.",
+    "require": {
+        "gravitypdf/upload": "@dev",
+        "symfony/translation": "5.4.45",
+        "illuminate/translation": "8.83.27",
+        "gettext/translator": "1.2.3",
+        "gettext/gettext": "5.7.3"
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../../",
+            "options": {
+                "symlink": true
+            }
+        }
+    ],
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}

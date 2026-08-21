@@ -31,6 +31,8 @@ composer i18n:pot                # regenerate i18n/upload.pot from the source
 
 `tools/i18n/generate-pot.php` is the maintainer's alone — it needs GNU `xgettext` and the repository, and `.gitattributes` export-ignores `/tools` with the rest of the dev tooling. It needs no manifest of its own, unlike the other two tool directories: extraction is `xgettext` with `-k -k__:1`, where the bare `-k` clears gettext's default PHP keywords so nothing but the marker is extracted, and a PHP-based scanner would do no better against a marker that only returns its argument. It is covered by `lint` and `check-syntax` for the reason `verify.php` is.
 
+`docs/translation/` ships one page per translation library, each holding the adapter a consumer copies. `tools/translator-readme/verify.php` reads those snippets out of the pages at run time and runs them against the real libraries, installed by Composer from that directory's own pinned manifest, the way `tools/psr7-readme/` does for the PSR-7 bridge — so a reworded example fails by name. It runs the documented `msginit`/`msgfmt`/`msgmerge` commands rather than approximating them in PHP, so the check needs GNU gettext and exercises the pipeline a reader actually follows. `wordpress.sh` is the same for the one library with no PHP adapter to run: it builds a plugin tree from `git archive`, runs the documented `make-pot --merge`, compiles the result, and **asserts the negative** — that a catalogue left inside `vendor/` is still invisible to `make-pot`, which is the claim the WordPress page turns on. Each snippet exists once: the README links to the pages rather than repeating them, or the check would only ever exercise whichever copy it found first.
+
 `i18n/` ships, and holds nothing but `upload.pot` — it is in `package.yml`'s expected top level for that reason. A consumer merges it into their own catalogue when they extract (`make-pot --merge=…`, `msgmerge`), which is the whole of the integration.
 
 The `i18n` workflow regenerates the catalogue and fails on a diff, which is what stops a reworded message silently orphaning a consumer's translation of it; the generator writes its own header and passes `--no-location`, so the file is byte-stable and the check does not fail on every unrelated edit.
@@ -191,6 +193,29 @@ With `overwrite = false`, `reserveDestination()` claims the name first with an e
 - PHPStan level 9 covers `src` **and** `tests`. `/* @phpstan-ignore-line */` is used sparingly — where `ArrayAccess` returns a nullable, and where a test deliberately passes the wrong type.
 - Property types live in docblocks, not native property type declarations — PHP 7.3 support forbids the latter. Same for parameter/return types beyond what 7.3 allows (no union types, no `mixed`).
 - Tests extend `Yoast\PHPUnitPolyfills\TestCases\TestCase` and use the polyfill's snake_case lifecycle hooks (`set_up()`, calling `parent::set_up()`), not `setUp()`.
+
+## Writing comments and documentation
+
+Applies to docblocks, inline comments, the README, `docs/`, `UPGRADE.md` and `CHANGELOG.md`.
+
+- **State a fact once.** Delete a sentence that restates the one before it in different words.
+- **Keep the fact, cut the justification.** "`recordError()` is the only way into the error
+  list" is the fact; "which is what makes the guarantee structural" is not.
+- **One fact per sentence.** An em-dash aside longer than the clause carrying it is two
+  sentences.
+- **Length in proportion to the code.** A one-line function does not get a twenty-line
+  docblock.
+- **Say only what a reader can check.** "Symfony's `PoFileLoader` answers `''` for an
+  untranslated entry" is checkable; "the seam fits whatever you already run" is not.
+- **No self-assessment.** Nothing is "deliberate", "careful", "elegant", or "the whole point".
+- **Comments carry the why.** Naming the bug a line prevents is useful; restating the line is
+  not.
+- **Examples carry their imports and run as written.** `tools/psr7-readme/` and
+  `tools/translator-readme/` execute them, so one that would not compile fails CI. Keep each
+  snippet in one place; the check only exercises the first copy it finds.
+- **A table when the reader compares, prose when they follow steps.**
+
+Read it back and count the sentences that could go without losing a fact. Delete them.
 
 ## Repository notes
 

@@ -88,12 +88,11 @@ class SizeTest extends TestCase
     }
 
     /**
-     * The bound is stated in the largest unit it reaches, so a limit configured as `5M` reads
-     * back as `5 MB` rather than `5242880 bytes`. 1024-based, matching
-     * `File::humanReadableToBytes()`, which is what parsed it.
+     * A limit configured as `5M` reads back as `5 MB`, not `5242880 bytes`. 1024-based, like
+     * `File::humanReadableToBytes()` which parsed it.
      *
-     * The file's own size is stubbed rather than fixtured: the units worth checking start at a
-     * kilobyte and run to a gigabyte, and no assets directory should hold one.
+     * The file's size is stubbed rather than fixtured, since the units worth checking run from
+     * a kilobyte to a gigabyte and no assets directory should hold one.
      *
      * @dataProvider provideSizesAndTheirUnits
      * @param int|string $limit
@@ -119,9 +118,9 @@ class SizeTest extends TestCase
     }
 
     /**
-     * A maximum rounds down and a minimum rounds up, so the number named is always one the
-     * file would pass at. 5,000,000 bytes is 4.768 MB: reported as `4.8 MB` a maximum would
-     * name a size that is still rejected.
+     * A maximum rounds down, a minimum rounds up, so the number named is always one the file
+     * would pass at. 5,000,000 bytes is 4.768 MB; a maximum shown as `4.8 MB` would name a
+     * size still rejected.
      */
     public function testTheStatedLimitIsAlwaysOneTheFileWouldPassAt(): void
     {
@@ -150,9 +149,9 @@ class SizeTest extends TestCase
     }
 
     /**
-     * `scale()` is the seam for the one thing this library cannot do: pick a decimal
-     * separator, which needs a locale. An override owns the number and the unit together, so
-     * the message id chosen still names the unit the amount is in.
+     * Picking a decimal separator needs a locale this library does not take, so `scale()` is
+     * the seam for it. An override gets the number and the unit together, so the message
+     * chosen still names the right unit.
      */
     public function testASubclassCanFormatTheAmountItsOwnWay(): void
     {

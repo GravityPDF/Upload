@@ -35,6 +35,6 @@ jobs:
       - name: Check what the package ships
         run: |
           git archive HEAD | tar -t | sed 's:/.*::' | sort -u > actual.txt
-          printf '%s\n' CHANGELOG.md LICENSE README.md UPGRADE.md composer.json i18n src \
+          printf '%s\n' CHANGELOG.md LICENSE README.md UPGRADE.md composer.json docs i18n src \
             | sort > expected.txt
           diff -u expected.txt actual.txt

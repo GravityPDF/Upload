@@ -182,10 +182,10 @@ class TranslationTest extends TestCase
     }
 
     /**
-     * With nothing to interpolate the same mismatch cannot hurt: the template is handed back
-     * whole either way. Checking anyway rejected correct translations, since `% o` is a
-     * conversion by PHP's grammar (`vsprintf('50% of', [])` raises) and a translation that
-     * happens not to collide carries none.
+     * With nothing to interpolate, a mismatch cannot hurt — the template is returned whole
+     * either way. Checking anyway rejected correct translations: `% o` counts as a conversion
+     * (`vsprintf('50% of', [])` raises), and a translation that avoids the collision counts
+     * none.
      */
     public function testATranslationIsKeptWhenThereIsNothingToInterpolate(): void
     {
@@ -247,5 +247,21 @@ class TranslationTest extends TestCase
         } finally {
             restore_error_handler();
         }
+    }
+
+    /**
+     * An empty `msgstr` means untranslated in gettext, but not every loader applies the rule.
+     * Symfony's `PoFileLoader` reads a partly-translated `.po` into one catalogue entry per
+     * msgid, empty ones included, so `trans()` answers `''` for anything not yet done.
+     * Rendering that would show a blank message rather than the English.
+     */
+    public function testAnEmptyTranslationIsTreatedAsNoTranslation(): void
+    {
+        Translation::setTranslator(static function (string $text, string $domain): string {
+            return '';
+        });
+
+        $this->assertSame('No file was uploaded', Translation::translate('No file was uploaded'));
+        $this->assertSame('No file was uploaded', Translation::render('No file was uploaded'));
     }
 }

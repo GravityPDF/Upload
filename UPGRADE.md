@@ -208,9 +208,9 @@ destination. A name can no longer select a subdirectory; construct the `FileSyst
 it instead. The shipped `FileInfo` already rewrites or blanks all of these.
 
 **If you subclass `File`.** `$errors` and `$constructorErrors` are gone, replaced by a
-`private $errorDetails` holding each error as its parts, so `getErrorDetails()` cannot be
-left with holes by an append that went around the sanitizing. Record through `recordError()`,
-still `protected`, which now takes the message and the filename separately:
+`private $errorDetails` holding each error as its parts, so nothing can append past the
+sanitizing. Record through `recordError()`, still `protected`, which now takes the message and
+the filename separately:
 `recordError(string $messageId, array $args = [], string $errorCode = ErrorCode::NONE,
 ?string $filename = null)`. A one-argument call is unchanged. Read with `getErrors()`.
 `$errorCodeMessages` is now the method `getUploadErrorMessages()`, for the same reason
@@ -226,20 +226,25 @@ still `protected`, which now takes the message and the filename separately:
   message's values before `$code` and `$previous`:
   `__construct(string $message, ?FileInfoInterface $fileInfo = null, string $errorCode =
   ErrorCode::NONE, array $messageArgs = [], int $code = 0, ?Throwable $previous = null)`.
-  `new Exception($message, $fileInfo)` is unaffected, which is nearly every throw in
-  practice; **a validator passing `$code` or `$previous` positionally is now passing them to
-  the wrong parameters.** Subclasses need no change: PHP exempts constructors from signature
-  compatibility, and 3.x already declared `strict_types=1`.
-* **Six error messages were reworded**, all of them strings `getErrors()` returns. The
-  `Validation\Size` pair state the bound in the largest of B/KB/MB/GB it reaches rather than
-  raw bytes (`'Must be no more than 5 MB'`), which means eight message ids where there were
-  two, and a scaled string rather than a byte count in `getErrorDetails()['args']`;
-  `'Missing a temporary folder'` and `'Failed to write file
-  to disk'` say the server failed rather than implying the submitter did
-  (`'The server is missing its temporary upload folder'`, `'The server could not write the
-  file to disk'`); `'Is not an uploaded file'` is now `'This file was not received as an
-  upload'`; `'Unknown Error'` is `'Unknown error'`. **Anything matching these strings needs
-  updating — match `ErrorCode` constants instead**, which is what they exist for.
+  `new Exception($message, $fileInfo)` is unaffected, which covers nearly every throw.
+  **But a validator passing `$code` or `$previous` positionally is now passing them to the
+  wrong parameters.** Subclasses need no change: PHP exempts constructors from signature
+  compatibility.
+* **Six error messages were reworded.** All are strings `getErrors()` returns:
+
+  | 3.x | 4.0.0 |
+  |---|---|
+  | `Must be less than or equal to: 5242880` | `Must be no more than 5 MB` |
+  | `Must be greater than or equal to: %1$s` | `Must be at least %1$s MB` |
+  | `Missing a temporary folder` | `The server is missing its temporary upload folder` |
+  | `Failed to write file to disk` | `The server could not write the file to disk` |
+  | `Is not an uploaded file` | `This file was not received as an upload` |
+  | `Unknown Error` | `Unknown error` |
+
+  `Validation\Size` now states the bound in the largest of B/KB/MB/GB it reaches, so it has
+  eight message ids where it had two, and `getErrorDetails()['args']` holds the scaled amount
+  rather than a byte count. **Anything matching these strings needs updating; match
+  `ErrorCode` constants instead.**
 * Both validation callbacks now fire for every file, including one that fails the
   uploaded-file check. `afterValidate` was previously skipped for those.
 * The filename rules moved to the new `GravityPdf\Upload\Filename`:
@@ -249,10 +254,9 @@ still `protected`, which now takes the message and the filename separately:
 
 ## 11. Translate the messages (optional)
 
-Nothing here is required. With no translator installed every message is the English string
-3.x produced, byte for byte.
+Optional. With no translator installed, every message is the English string 3.x produced.
 
-If you do want them translated, install a lookup once:
+To translate them, install a lookup once:
 
 ```php
 use GravityPdf\Upload\Translation;
@@ -262,26 +266,26 @@ Translation::setTranslator(static function (string $text, string $domain): strin
 });
 ```
 
-The English source string is the message id, so nothing has to be mapped and a lookup that
-finds nothing returns what the library would have said anyway. Seed a catalogue from
-`i18n/upload.pot`; there are no `.po` or `.mo` files to conflict with.
+The English string is the message id, so there is nothing to map, and a lookup that finds
+nothing returns what the library would have said anyway. Seed a catalogue from
+`i18n/upload.pot`; no `.po` or `.mo` files ship, so nothing conflicts.
 
-The leading backslash matters if that file also uses this library's `__()` marker for a
-validation of your own: without it the call resolves to the marker, which returns its
-argument, and the translator silently does nothing.
+The leading backslash matters if this file also uses the library's `__()` marker for a
+validation of your own. Without it the call reaches the marker, which returns its argument, and
+your translator silently does nothing.
 
-In WordPress, merge the catalogue into your own when you extract, since `wp i18n make-pot`
-never looks inside `vendor/`:
+In WordPress, merge the catalogue into yours when you extract — `wp i18n make-pot` never looks
+inside `vendor/`:
 
 ```bash
 wp i18n make-pot . languages/my-plugin.pot \
     --merge=vendor/gravitypdf/upload/i18n/upload.pot
 ```
 
-`Exception::getMessage()` stays English on purpose, including everything `Storage\FileSystem`
-throws — those name the destination and belong in your log. The
-[README](README.md#translating-error-messages) covers both halves, and `getErrorDetails()` if
-you would rather branch on a stable code than read the prose.
+`Exception::getMessage()` stays English deliberately, including everything
+`Storage\FileSystem` throws: those name the destination and belong in your log. See the
+[README](README.md#translating-error-messages) for the rest, and for `getErrorDetails()` if
+you would rather branch on a code than read prose.
 
 ## Everything else
 

@@ -57,11 +57,11 @@ class Exception extends RuntimeException
         $this->messageId = $message;
         $this->messageArgs = array_values($messageArgs);
 
-        /* English, always. `getMessage()` is `final` and `__toString()` reads the internal
-           property rather than calling it, so translating behind the getter would give a
-           `catch` block one string and an uncaught-exception handler another. An exception is
-           the half of this library written for a log; `getErrors()` is the half written to be
-           shown. To display this one, re-render it from `getMessageId()`/`getMessageArgs()`. */
+        /* Always English. `getMessage()` is `final` and `__toString()` reads the property
+           directly, so translating inside the getter would give a `catch` block one string
+           and an uncaught-exception handler another. Exceptions here are for your log;
+           `getErrors()` is what you show. To display this one, rebuild it from
+           `getMessageId()` and `getMessageArgs()`. */
         parent::__construct(Translation::interpolate($message, $this->messageArgs), $code, $previous);
     }
 
