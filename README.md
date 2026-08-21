@@ -224,14 +224,12 @@ foreach ($file->getUploadedLocators() as $offset => $storedPath) {
 }
 ```
 
-A file that never transferred counts as rejected, since its message is in `getErrors()`.
-Storage failures (destination exists, blocked extension, disk full) still throw part-way
-through the batch, which is what the `catch` is for: `getUploadedLocators()` lists what was
-written before the throw.
+Nothing throws for a rejected file, so the `false` return is the only signal that one was. A
+file that never transferred counts as rejected. **The files that passed are already on disk**,
+so undo them yourself if you abandon the request there.
 
-Nothing throws for a rejected file, so the `false` return is the only signal that one was.
-**The files that passed are already on disk**, so undo them yourself if you abandon the
-request there, the way the `catch` above does.
+Storage failures (destination exists, blocked extension, disk full) still throw part-way
+through the batch: `getUploadedLocators()` lists what was written before the throw.
 
 ### Uploads from another source
 
@@ -275,10 +273,9 @@ foreach ($list->getUploadedLocators() as $offset => $storedPath) {
 }
 ```
 
-`$failures` takes the pairs themselves, not finished strings — the collection words them for
-you. `File::formatUploadFailure($clientFilename, $errorCode)` is for the other case: reporting
-a failed transfer somewhere that is not a `FileList` at all. Its return value is a rendered
-line, so passing it back into `$failures` raises `InvalidArgumentException`.
+`File::formatUploadFailure($clientFilename, $errorCode)` renders that `getErrors()` entry for a
+failed transfer outside any `FileList`. It returns a finished string, so passing it back into
+`$failures` raises `InvalidArgumentException`.
 
 #### Two decisions this path needs from you
 
@@ -492,31 +489,26 @@ $file->addValidation(new MaxDimensions(2048, 2048));
 Failures accumulate rather than abort: every validation runs against every file, and
 `getErrors()` reports them all at once.
 
-The message, its values and the code are kept apart rather than assembled here, so your rule
-behaves like a shipped one: the message goes through the
-[translator](#translating-error-messages) if one is installed, the values are interpolated
-after the lookup — a `%` in one can never be read as a conversion — and the code you chose
-shows up in `getErrorDetails()` for a caller branching on it. Pass a finished string with no
-values if you would rather; `getErrorDetails()` then reports the code
+The message, its values and the code are kept apart rather than assembled here: the message
+goes through the [translator](#translating-error-messages) if one is installed, the values are
+interpolated after the lookup, so a `%` in one is never read as a conversion, and the code you
+chose shows up in `getErrorDetails()` for a caller branching on it. Pass a finished string with
+no values if you would rather; `getErrorDetails()` then reports the code
 `ErrorCode::VALIDATION_REJECTED` for it, so every entry has one.
 
-`__()` here is `GravityPdf\Upload\__()`, which marks the string for an extractor and hands it
-straight back. It is **not** WordPress's `__()` and it never translates. Using it is optional:
-add `use function GravityPdf\Upload\__;`, or leave the literal bare and use your own marker if
-your rule's wording lives in your own catalogue. Either way the string reaches the translator,
-since the marker returns its argument.
+`__()` here is `GravityPdf\Upload\__()`: it marks the string for an extractor and hands it
+straight back. It is **not** WordPress's `__()` and it never translates. Using it is
+optional — leave the literal bare, or use your own marker if your rule's wording lives in
+your own catalogue. Its second argument names a catalogue for whatever reads these calls;
+the marker discards it, and this library looks the message up under `Translation::DOMAIN`
+regardless.
 
-The second argument names a catalogue for whatever reads these calls. The marker discards it
-and this library always looks a message up under `Translation::DOMAIN`, so it tells *your*
-extractor where the string belongs and nothing more; your translator closure decides where the
-lookup lands. It defaults to `Translation::DOMAIN`, and the library's own calls leave it off.
-
-If you do use the marker, import it in **every** file that calls it. PHP resolves an
-unqualified function call against the global namespace when the current one has no match, so in
-a WordPress plugin a missing import means `__()` reaches WordPress's function instead: no
-error, but the string is translated at the throw rather than at the render, and
-`Exception::getMessage()` stops being the English you search your log for. Fully qualified,
-`\GravityPdf\Upload\__('…')` cannot take that path, and `xgettext` extracts it just the same.
+If you do use the marker, import it in **every** file that calls it with
+`use function GravityPdf\Upload\__;`, or call it fully qualified. PHP resolves an unqualified
+function call against the global namespace when the current one has no match, so in a WordPress
+plugin a missing import reaches WordPress's `__()` instead: no error, but the string is
+translated at the throw rather than at the render, and `Exception::getMessage()` stops being
+the English you search your log for. `xgettext` extracts either form.
 
 Your message goes through `Filename::sanitizeForDisplay()` first: bidi controls are deleted,
 runs of control characters collapse to a single space, surrounding whitespace is trimmed, and
@@ -583,8 +575,7 @@ Translation::setTranslator(static function (string $text, string $domain): strin
 });
 ```
 
-The English string **is** the message id — the gettext msgid — so there is nothing to map, and
-a lookup that finds nothing returns what the library would have said anyway.
+The English string **is** the message id — the gettext msgid — so there is nothing to map.
 
 Your callable gets the string and the text domain. It never gets the values that go into the
 string; those are interpolated afterwards, so a filename containing `%` cannot be read as a
@@ -607,10 +598,6 @@ throw new Exception(
     [$amount]
 );
 ```
-
-`__()` just returns its argument. Looking up in one place is what keeps
-`Exception::getMessage()` in English for your log, keeps the raw msgid in `getErrorDetails()`,
-and uses the locale in force when the message is read rather than when the file was rejected.
 
 A broken catalogue cannot break an upload. If your translator throws, returns something other
 than a string, or returns a template whose placeholders do not match the original, the English
@@ -651,9 +638,9 @@ quietly reverting to English.
 
 ### Using an existing translation library
 
-A plain `callable`, so it fits whatever you already run and adds no dependency — this library
-still requires only `ext-fileinfo`. It loads no catalogue, picks no locale, and has no plurals,
-because your application handles all of that. One lookup is all that is left.
+The hook is a plain `callable` and adds no dependency: this library still requires only
+`ext-fileinfo`. It loads no catalogue, picks no locale, and has no plurals — your application
+already does all of that.
 
 | | Catalogue | Notes |
 |---|---|---|
@@ -799,10 +786,8 @@ non-empty list and throws otherwise, so a missing config value cannot silently d
 check. `getBlockedExtensions()` reports what is actually configured.
 
 `acceptFilesNotUploadedByPhp()` is the one to think hardest about, and a `$_FILES` application
-never needs it. Without it the write goes through `move_uploaded_file()`, which refuses any
-source PHP did not receive as an upload. It exists for
-[uploads from another source](#uploads-from-another-source), and belongs with an
-`isUploadedFile()` override.
+never needs it. It exists for [uploads from another source](#uploads-from-another-source), and
+belongs with an `isUploadedFile()` override.
 
 ## API reference
 
@@ -824,7 +809,7 @@ php.ini, and `InvalidArgumentException` when the key is not in `$_FILES`.
 | `getErrors(): string[]` | All failures from the last validation run (`isValid()`, `upload()` or `uploadValid()`) plus any files that failed to transfer, as `"filename: message"`. A `$_FILES` entry too malformed to name a file is reported without the prefix. Sanitized, but must still be escaped on output. |
 | `getErrorDetails(): array` | The same failures as their parts: `code` (an [`ErrorCode`](#errorcode) constant, stable across releases), the untranslated `message_id` and its `args`, the sanitized `filename` or `null`, and the finished `message`. For branching on a failure, or rendering it with your own wording. |
 | `upload(): bool` | Re-validates, then stores each file via the storage backend. All-or-nothing: one file failing validation stores none of them; call `uploadValid()` in its place to store the ones that passed. Throws `LogicException` when no validations are configured, and `Exception` when validation fails (details in `getErrors()`), when the collection is empty, or when storage fails (details in the exception message). |
-| `uploadValid(): bool` | Re-validates, then stores only the files that passed, leaving the rest in `getErrors()`. Use it in place of `upload()` on a multi-file field where a partial batch is acceptable. Returns `true` when every file was stored and `false` when at least one was rejected, counting a file that failed to transfer. Nothing throws for a rejected file, so that return value is the only signal, and cleaning up what was already stored is yours on the `false` branch. Throws the same `LogicException` with no validations configured, the same `Exception` on an empty collection, and whatever storage throws. |
+| `uploadValid(): bool` | Re-validates, then stores only the files that passed, leaving the rest in `getErrors()`. Returns `true` when every file was stored and `false` when at least one was rejected, counting a file that failed to transfer. Nothing throws for a rejected file, so cleaning up what was already stored is yours on the `false` branch. Throws the same `LogicException` with no validations configured, the same `Exception` on an empty collection, and whatever storage throws. |
 | `getUploadedLocators(): string[]` | Locators returned by the most recent `upload()` or `uploadValid()`, in whatever form the storage backend defines. Multi-file uploads are not atomic, so after a failure this is what needs rolling back. Keyed by collection offset, so the array is sparse after `uploadValid()` and the locator at `$i` still belongs to `$file[$i]`. |
 | `allowUnvalidatedUploads(): File` | Let `upload()` and `uploadValid()` proceed with no validations configured. |
 | `allowsUnvalidatedUploads(): bool` | Whether that was allowed. An empty `getValidations()` does not say whether that was a decision. |
@@ -983,11 +968,10 @@ string, and they reach `getErrorDetails()` intact.
 | `Translation::DOMAIN` | `'gravitypdf-upload'`. Fixed: WordPress forbids a variable text domain, and no extractor can follow one. |
 
 `GravityPdf\Upload\__(string $text, string $domain = Translation::DOMAIN): string` is the
-marker, not a method — gettext's `N_()` idiom under a familiar name and shape, returning
-`$text` so an extractor records the msgid while the lookup happens elsewhere. It is not
-WordPress's `__()`, it never translates, and the two coexist. The domain is discarded: it
-describes the string to your extractor, and this library's own lookup always uses
-`Translation::DOMAIN`. Optional, as it is on WordPress's `__()`; the calls in `src` omit it. Outside the library's own namespace, import it with
+marker — a function, not a method. It is gettext's `N_()` idiom: it returns `$text`, so an
+extractor records the msgid while the lookup happens elsewhere. It is not WordPress's `__()`,
+and the two coexist. The domain is discarded, and is optional as it is on WordPress's `__()`;
+the calls in `src` omit it. Outside the library's own namespace, import it with
 `use function GravityPdf\Upload\__;` or call it fully qualified; an unqualified call with
 neither falls back to the global `__()`.
 

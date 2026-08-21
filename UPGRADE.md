@@ -1,8 +1,8 @@
 # Upgrading from 3.x to 4.0
 
 4.0 is a security release. The API is mostly unchanged, but new protections are on by
-default and will refuse some uploads that 3.x accepted. Read this before deploying. The
-[changelog](CHANGELOG.md) has the full list.
+default and will refuse some uploads that 3.x accepted. The [changelog](CHANGELOG.md) has
+the full list.
 
 Coming from `codeguy/upload`? Replace the `\Upload` namespace with `\GravityPdf\Upload`
 to get the 3.x API, then continue here.
@@ -97,8 +97,7 @@ $storage->setMode(0644);  // or null to leave it to the umask, as 3.x did
 Bounds without the trailing `B` are unchanged.
 
 **Check any bound using a unit other than `B`, `K`, `M` or `G` as well.** 3.x read the unit
-as bytes, so `new Size('1T')` was a one-byte limit that rejected everything while reading
-as a generous one. It now throws.
+as bytes, so `new Size('1T')` was a one-byte limit that rejected everything. It now throws.
 
 Unparseable input like `'abc'` throws `InvalidArgumentException` instead of becoming `0`,
 a negative size like `'-5M'` throws, and fractions like `'0.5M'` work.
@@ -132,9 +131,9 @@ if (count($file) === 0 || $file->isValid() === false) {
 nothing, so check the count if an empty field is a valid outcome for your form.
 
 A multi-file field where only *some* of the files failed behaves as it did in 3.x:
-`upload()` stores all of them or none. Nothing to change unless you want the other
-behaviour. To keep the files that passed, call `uploadValid()` where you call `upload()`
-and check what it returns instead of catching a validation failure.
+`upload()` stores all of them or none. To keep the files that passed, call `uploadValid()`
+where you call `upload()` and check what it returns instead of catching a validation
+failure.
 
 ```php
 if ($file->uploadValid() === false) {
@@ -208,18 +207,16 @@ destination. A name can no longer select a subdirectory; construct the `FileSyst
 it instead. The shipped `FileInfo` already rewrites or blanks all of these.
 
 **If you subclass `File`.** `$errors` and `$constructorErrors` are gone, replaced by a
-`private $errorDetails` holding each error as its parts, so nothing can append past the
-sanitizing. Record through `recordError()`, still `protected`, which now takes the message and
-the filename separately:
+`private $errorDetails` holding each error as its parts. Record through `recordError()`,
+still `protected`, which now takes the message and the filename separately:
 `recordError(string $messageId, array $args = [], string $errorCode = ErrorCode::NONE,
 ?string $filename = null)`. A one-argument call is unchanged. Read with `getErrors()`.
-`$errorCodeMessages` is now the method `getUploadErrorMessages()`, for the same reason
-`FileSystem::getDefaultBlockedExtensions()` is one — override that instead.
+`$errorCodeMessages` is now the method `getUploadErrorMessages()`; override that instead.
 
 **Other changes:**
 
-* `blockExtensions()` takes a required, non-empty array. No argument no longer means the
-  default list: pass `FileSystem::getDefaultBlockedExtensions()`.
+* `blockExtensions()` called with no argument no longer means the default list: pass
+  `FileSystem::getDefaultBlockedExtensions()`.
 * `File::__call()` throws `\BadMethodCallException` and `FileInfo::createFromFactory()`
   throws `\LogicException`, both previously `\GravityPdf\Upload\Exception`.
 * `Exception::__construct()` declares `string $message` and takes the error code and the
@@ -254,7 +251,7 @@ the filename separately:
 
 ## 11. Translate the messages (optional)
 
-Optional. With no translator installed, every message is the English string 3.x produced.
+With no translator installed, every message is the English string 3.x produced.
 
 To translate them, install a lookup once:
 
@@ -268,7 +265,7 @@ Translation::setTranslator(static function (string $text, string $domain): strin
 
 The English string is the message id, so there is nothing to map, and a lookup that finds
 nothing returns what the library would have said anyway. Seed a catalogue from
-`i18n/upload.pot`; no `.po` or `.mo` files ship, so nothing conflicts.
+`i18n/upload.pot`; no `.po` or `.mo` files ship.
 
 The leading backslash matters if this file also uses the library's `__()` marker for a
 validation of your own. Without it the call reaches the marker, which returns its argument, and
@@ -282,8 +279,8 @@ wp i18n make-pot . languages/my-plugin.pot \
     --merge=vendor/gravitypdf/upload/i18n/upload.pot
 ```
 
-`Exception::getMessage()` stays English deliberately, including everything
-`Storage\FileSystem` throws: those name the destination and belong in your log. See the
+`Exception::getMessage()` stays English, including everything `Storage\FileSystem` throws:
+those name the destination and belong in your log. See the
 [README](README.md#translating-error-messages) for the rest, and for `getErrorDetails()` if
 you would rather branch on a code than read prose.
 
@@ -291,25 +288,23 @@ you would rather branch on a code than read prose.
 
 Each of these is listed in full in the [changelog](CHANGELOG.md).
 
-* **`upload()` no longer runs an `isValid()` override.** Both entry points validate through
-  a private method that reports which files passed, so `uploadValid()` doesn't validate a
-  second time and let a validator with a side effect see every file twice. Validation still
-  runs on every `upload()` call, and `isValid()` is unchanged when you call it yourself. But
-  a `File` subclass that overrode `isValid()` to add a check of its own (a quota, a
-  per-tenant policy, an extra scan) no longer has that check run by `upload()`. **Move it
-  into a `ValidationInterface`**, which both entry points honour.
+* **`upload()` no longer runs an `isValid()` override.** Both entry points validate
+  through a private method instead. Validation still runs on every `upload()` call, and
+  `isValid()` is unchanged when you call it yourself. But a `File` subclass that overrode
+  `isValid()` to add a check of its own (a quota, a per-tenant policy, an extra scan) no
+  longer has that check run by `upload()`. **Move it into a `ValidationInterface`**, which
+  both entry points honour.
 * **A `Storage\FileSystem` subclass that overrides `resolveFilename()` no longer decides
   which names are refused.** `upload()` applies every refusal to whatever the seam returns:
   `''`, `.`, `..`, a leading dot, control characters and bidi controls, on top of the device
   names and blocked extensions it already checked. The shipped seam refused these itself, so
-  nothing changes unless you replaced it — but if you did, names it used to store are now
-  refused with `'Invalid destination file name'`. That is the point: `.htaccess` was one of
-  them, since a dotfile presents no extension for the deny-list to match. Reproducing the
-  checks in your override is no longer needed, and is harmless if you already do.
+  nothing changes unless you replaced it. If you did, names it used to store are now refused
+  with `'Invalid destination file name'` — `.htaccess` among them, since a dotfile presents
+  no extension for the deny-list to match. Reproducing the checks in your override is no
+  longer needed, and is harmless if you already do.
 * **The storage collision message changed.** `'File already exists'` is now
-  `'A file named "report.txt" already exists'`, since sanitizing is many-to-one and the old
-  wording couldn't say which name collided. The name is sanitized for display first, and a
-  name left with nothing by that reports `'A file with that name already exists'`, so there
+  `'A file named "report.txt" already exists'`. The name is sanitized for display first, and
+  a name left with nothing by that reports `'A file with that name already exists'`, so there
   are two wordings to match rather than one. **Update anything matching the old string.** Log
   storage messages rather than showing them to whoever submitted the file: the wording
   distinguishes a name that exists from a destination that couldn't be created, which is an
