@@ -206,12 +206,31 @@ characters, resolves to a Windows device such as `CON.txt`, or points at a symli
 destination. A name can no longer select a subdirectory; construct the `FileSystem` with
 it instead. The shipped `FileInfo` already rewrites or blanks all of these.
 
-**If you subclass `File`.** `$errors` and `$constructorErrors` are gone, replaced by a
-`private $errorDetails` holding each error as its parts. Record through `recordError()`,
+**If you subclass `File`.** `isValid()`, `upload()` and `uploadValid()` are `final`, so an
+override of any of them is a fatal error when your class is loaded. `$errors` and
+`$constructorErrors` are gone, replaced by a `private $errorDetails` holding each error as its
+parts. Reading, writing or `isset()`-ing either name throws `\LogicException`, and a subclass
+that *declares* one of them — or `$errorCodeMessages` — is refused when it is constructed, since
+a declared property is in scope and records into itself where nothing reads it. Record through `recordError()`,
 still `protected`, which now takes the message and the filename separately:
 `recordError(string $messageId, array $args = [], string $errorCode = ErrorCode::NONE,
 ?string $filename = null)`. A one-argument call is unchanged. Read with `getErrors()`.
-`$errorCodeMessages` is now the method `getUploadErrorMessages()`; override that instead.
+
+**What is still a seam, and what is not.**
+
+| If you overrode… | Now do… |
+|---|---|
+| `File::isValid()`, `File::upload()`, `File::uploadValid()` | Implement `ValidationInterface`, which all three run. It is handed one file at a time, so a check across the whole batch runs before you call `upload()` |
+| `$this->errors[]`, `$this->constructorErrors` | `recordError()` to write, `getErrors()`/`getErrorDetails()` to read |
+| `File::$errorCodeMessages` | Override `getUploadErrorMessages()` |
+| `FileInfo::isUploadedFile()` | Still a seam — pair it with `FileSystem::acceptFilesNotUploadedByPhp()` |
+| `FileInfo::getReservedWindowsNames()` | Still a seam |
+| `FileInfo::sanitizeName()` | Still a seam for `setName()`, but `setExtension()` re-fits the name afterwards through private code an override does not see |
+| `FileSystem::resolveFilename()` | Still a seam, but no longer controls refusals |
+| `FileSystem::moveUploadedFile()` | Still there, still `protected` |
+
+`Validation\Size::scale()` is new, and the seam for the one question the wording leaves open:
+it names the unit and formats the number, decimal separator included.
 
 **Other changes:**
 
@@ -284,12 +303,11 @@ you would rather branch on a code than read prose.
 
 Each of these is listed in full in the [changelog](CHANGELOG.md).
 
-* **`upload()` no longer runs an `isValid()` override.** Both entry points validate
-  through a private method instead. Validation still runs on every `upload()` call, and
-  `isValid()` is unchanged when you call it yourself. But a `File` subclass that overrode
-  `isValid()` to add a check of its own (a quota, a per-tenant policy, an extra scan) no
-  longer has that check run by `upload()`. **Move it into a `ValidationInterface`**, which
-  both entry points honour.
+* **`upload()` no longer runs an `isValid()` override.** Both entry points validate through a
+  private method instead, and all three are `final`, so a subclass carrying one is a fatal error
+  when it loads rather than a check that silently stopped running. Validation still runs on every
+  `upload()` call, and `isValid()` is unchanged when you call it yourself. **Move a check of your
+  own into a `ValidationInterface`**, which all three run.
 * **A `Storage\FileSystem` subclass that overrides `resolveFilename()` no longer decides
   which names are refused.** `upload()` applies every refusal to whatever the seam returns:
   `''`, `.`, `..`, a leading dot, control characters and bidi controls, on top of the device

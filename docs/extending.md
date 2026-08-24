@@ -4,6 +4,10 @@ Two interfaces are the seams: `ValidationInterface` decides whether a file is ac
 `StorageInterface` decides where it lands. Neither needs a subclass of anything this library
 ships.
 
+Overriding `File::isValid()` is not a third seam: it, `upload()` and `uploadValid()` are
+`final`, since `upload()` validates through a private method that an override never reaches.
+A check of your own goes in a `ValidationInterface`, which all three run.
+
 ## Custom validation rules
 
 Implement `ValidationInterface` and throw `GravityPdf\Upload\Exception` to reject a file.

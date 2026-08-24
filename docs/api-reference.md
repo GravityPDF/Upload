@@ -15,11 +15,11 @@ php.ini, and `InvalidArgumentException` when the key is not in `$_FILES`.
 | `addValidation(ValidationInterface $validation): File` | Add a single validation rule. Chainable, as are all setters below. |
 | `addValidations(array $validations): File` | Add several validation rules at once. |
 | `getValidations(): ValidationInterface[]` | The rules added so far. |
-| `isValid(): bool` | Runs `is_uploaded_file()` plus every validation against every file, accumulating failures. Each call resets the error list and re-validates, so it is idempotent. |
+| `final isValid(): bool` | Runs `is_uploaded_file()` plus every validation against every file, accumulating failures. Each call resets the error list and re-validates, so it is idempotent. |
 | `getErrors(): string[]` | All failures from the last validation run (`isValid()`, `upload()` or `uploadValid()`) plus any files that failed to transfer, as `"filename: message"`. A `$_FILES` entry too malformed to name a file is reported without the prefix. Sanitized, but must still be escaped on output. |
 | `getErrorDetails(): array` | The same failures as their parts: `code` (an [`ErrorCode`](#errorcode) constant, stable across releases), the untranslated `message_id` and its `args`, the sanitized `filename` or `null`, and the finished `message`. For branching on a failure, or rendering it with your own wording. |
-| `upload(): bool` | Re-validates, then stores each file via the storage backend. All-or-nothing: one file failing validation stores none of them; call `uploadValid()` in its place to store the ones that passed. Throws `LogicException` when no validations are configured, and `Exception` when validation fails (details in `getErrors()`), when the collection is empty, or when storage fails (details in the exception message). |
-| `uploadValid(): bool` | Re-validates, then stores only the files that passed, leaving the rest in `getErrors()`. Returns `true` when every file was stored and `false` when at least one was rejected, counting a file that failed to transfer. Nothing throws for a rejected file, so cleaning up what was already stored is yours on the `false` branch. Throws the same `LogicException` with no validations configured, the same `Exception` on an empty collection, and whatever storage throws. |
+| `final upload(): bool` | Re-validates, then stores each file via the storage backend. All-or-nothing: one file failing validation stores none of them; call `uploadValid()` in its place to store the ones that passed. Throws `LogicException` when no validations are configured, and `Exception` when validation fails (details in `getErrors()`), when the collection is empty, or when storage fails (details in the exception message). |
+| `final uploadValid(): bool` | Re-validates, then stores only the files that passed, leaving the rest in `getErrors()`. Returns `true` when every file was stored and `false` when at least one was rejected, counting a file that failed to transfer. Nothing throws for a rejected file, so cleaning up what was already stored is yours on the `false` branch. Throws the same `LogicException` with no validations configured, the same `Exception` on an empty collection, and whatever storage throws. |
 | `getUploadedLocators(): string[]` | Locators returned by the most recent `upload()` or `uploadValid()`, in whatever form the storage backend defines. Multi-file uploads are not atomic, so after a failure this is what needs rolling back. Keyed by collection offset, so the array is sparse after `uploadValid()` and the locator at `$i` still belongs to `$file[$i]`. |
 | `allowUnvalidatedUploads(): File` | Let `upload()` and `uploadValid()` proceed with no validations configured. What that leaves standing is under [Turning the defaults off](turning-the-defaults-off.md). |
 | `allowsUnvalidatedUploads(): bool` | Whether that was allowed. An empty `getValidations()` does not say whether that was a decision. |
@@ -29,6 +29,12 @@ php.ini, and `InvalidArgumentException` when the key is not in `$_FILES`.
 | `afterUpload(callable $callback): File` | Hook run per file after storage. |
 | `File::humanReadableToBytes(string $input): int` | Static helper that converts `'5M'` to `5242880`. Accepts B/K/M/G with an optional trailing `B`, and fractions like `'0.5M'`. Throws `InvalidArgumentException` on unparseable input. |
 | `File::formatUploadFailure(string $clientFilename, int $errorCode): string` | Static: the `getErrors()` string for a file that never arrived, from a client-supplied name and an `UPLOAD_ERR_*` code. Sanitizes the name as the `$_FILES` path does. For reporting a failed transfer outside any collection — a [`FileList`](#filelist)'s `$failures` takes the pairs and words them itself, so it does not need this. A code with no message of its own reads as `Unknown error`. |
+
+The three `final` methods share one sequence: reset the error list, take the re-entrancy lock,
+and derive the files that passed from what each validation recorded. Add a check of your own
+through [`ValidationInterface`](extending.md). A `File` subclass records failures with the
+`protected recordError()`; the list itself is `private`, and reaching for `$errors`,
+`$constructorErrors`, `$errorDetails` or `$constructorErrorDetails` throws `LogicException`.
 
 `File` also implements `Countable`, `ArrayAccess` and `IteratorAggregate` over its
 `FileInfoInterface` objects, and forwards any other method call to them: with one file the
