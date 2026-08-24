@@ -115,6 +115,43 @@ These calls are forwarded to every file in the collection. With one file you get
 back, with several you get an array of values, and with none you get `null`. When a field
 accepts multiple files, read metadata per file instead.
 
+### Optional upload fields
+
+A field the submitter left empty is still sent: PHP fills `$_FILES` with
+`UPLOAD_ERR_NO_FILE`, which is recorded as an error, so `isValid()` returns `false` and
+`upload()` throws. Count the collection before validating to tell "nothing was chosen" apart
+from "what was chosen is unacceptable":
+
+```php
+use GravityPdf\Upload\File;
+use GravityPdf\Upload\Storage\FileSystem;
+use GravityPdf\Upload\Validation\FileType;
+
+$storage = new FileSystem('/path/to/uploads');
+
+// A form posted without the field at all leaves no key, which the constructor throws
+// InvalidArgumentException for
+if (isset($_FILES['attachment']) === false) {
+    return;
+}
+
+$file = new File('attachment', $storage);
+
+// Empty for a field with nothing selected, whether it takes one file or many
+if (count($file) === 0) {
+    return;
+}
+
+$file->addValidations([new FileType('pdf', 'application/pdf')]);
+
+if ($file->isValid() === false) {
+    // Something was chosen and it was rejected: report $file->getErrors()
+    return;
+}
+
+$file->upload();
+```
+
 ### Multi-file upload
 
 ```html
