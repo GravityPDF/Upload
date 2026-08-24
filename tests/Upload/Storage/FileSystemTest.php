@@ -1393,6 +1393,40 @@ class FileSystemTest extends TestCase
     }
 
     /**
+     * Windows before PHP 7.4 reports `ino` as 0 for both stats, so the inode comparison has
+     * nothing to compare. Reading that as a mismatch answered `'Destination is a symbolic
+     * link'` to every reservation — which is every upload the default configuration makes, so
+     * the platform could not store a single file. `dev` differs here as well, to show it is
+     * the missing inode that decides and not a lucky match on the drive.
+     *
+     * Stubbed rather than run on Windows: this has to hold on the platform the suite is
+     * actually asserted on, and `lstatEntry()` is the seam for exactly this.
+     */
+    public function testAReservationIsNotRefusedWhereTheInodeIsUnavailable(): void
+    {
+        $workingDirectory = $this->makeWorkingDirectory();
+
+        $storage = $this->getMockBuilder(FileSystem::class)
+            ->setConstructorArgs([$workingDirectory, false])
+            ->onlyMethods(['moveUploadedFile', 'lstatEntry'])
+            ->getMock();
+
+        $storage->method('moveUploadedFile')->willReturnCallback(
+            static function (string $source, string $destination): bool {
+                return copy($source, $destination);
+            }
+        );
+
+        /* What that platform answers: no inode, and a `dev` of its own */
+        $storage->method('lstatEntry')->willReturn(['dev' => 2, 'ino' => 0]);
+
+        $stored = $storage->upload(new FileInfo($this->assetsDirectory . '/foo.txt', 'foo.txt'));
+
+        $this->assertSame($this->destinationOf($workingDirectory, 'foo.txt'), $stored);
+        $this->assertFileExists($stored);
+    }
+
+    /**
      * refuseBlockedExtensions() matches one dot-separated component at a time, so an entry that
      * is itself compound has to be split or it silently blocks nothing.
      */
