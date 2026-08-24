@@ -8,8 +8,7 @@
  * key to a translator. With none set it answers with its own name, so `verify.php` can tell
  * which function a call actually reached.
  *
- * Declared in the global namespace deliberately. The whole point of the README's leading
- * backslash is that `\__()` resolves here rather than to this library's marker.
+ * Declared in the global namespace, which is where the documented adapters reach it from.
  *
  * @package Upload
  */

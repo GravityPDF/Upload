@@ -39,8 +39,7 @@ jobs:
         with:
           php-version: ${{ matrix.php }}
 
-      # The autoloader the check runs under is the one a consumer gets, src/Upload/i18n.php
-      # included: an unresolved `files` entry reports __() as undefined from inside File.php.
+      # The autoloader the check runs under is the one a consumer gets
       - name: Install the library
         run: composer install --no-dev --no-interaction --no-progress
 

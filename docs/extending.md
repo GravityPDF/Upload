@@ -12,9 +12,8 @@ The exception message is what `getErrors()` shows the end user:
 ```php
 use GravityPdf\Upload\Exception;
 use GravityPdf\Upload\FileInfoInterface;
+use GravityPdf\Upload\Translation;
 use GravityPdf\Upload\ValidationInterface;
-
-use function GravityPdf\Upload\__;
 
 class MaxDimensions implements ValidationInterface
 {
@@ -33,7 +32,7 @@ class MaxDimensions implements ValidationInterface
 
         if ($size['width'] > $this->maxWidth || $size['height'] > $this->maxHeight) {
             throw new Exception(
-                __('Image must be no larger than %1$sx%2$s pixels', 'my-plugin'),
+                Translation::__('Image must be no larger than %1$sx%2$s pixels', 'my-plugin'),
                 $fileInfo,
                 'max_dimensions',
                 [$this->maxWidth, $this->maxHeight]
@@ -55,19 +54,15 @@ chose shows up in `getErrorDetails()` for a caller branching on it. Pass a finis
 no values if you would rather; `getErrorDetails()` then reports the code
 `ErrorCode::VALIDATION_REJECTED` for it, so every entry has one.
 
-`__()` here is `GravityPdf\Upload\__()`: it marks the string for an extractor and hands it
-straight back. It is **not** WordPress's `__()` and it never translates. Using it is
-optional — leave the literal bare, or use your own marker if your rule's wording lives in
-your own catalogue. Its second argument names a catalogue for whatever reads these calls;
-the marker discards it, and this library looks the message up under `Translation::DOMAIN`
-regardless.
+`Translation::__()` marks the string for an extractor and hands it straight back. It is
+**not** WordPress's `__()` and it never translates. Using it is optional — leave the literal
+bare, or use your own marker if your rule's wording lives in your own catalogue. Its second
+argument names a catalogue for whatever reads these calls; the marker discards it, and this
+library looks the message up under `Translation::DOMAIN` regardless.
 
-If you do use the marker, import it in **every** file that calls it with
-`use function GravityPdf\Upload\__;`, or call it fully qualified. PHP resolves an unqualified
-function call against the global namespace when the current one has no match, so in a WordPress
-plugin a missing import reaches WordPress's `__()` instead: no error, but the string is
-translated at the throw rather than at the render, and `Exception::getMessage()` stops being
-the English you search your log for. `xgettext` extracts either form.
+`xgettext -k__:1` extracts it exactly as it extracts a bare `__()`: the keyword matches the
+trailing identifier and ignores the class prefix, so an aliased `T::__()` and a fully
+qualified `\GravityPdf\Upload\Translation::__()` are read the same way.
 
 Your message goes through `Filename::sanitizeForDisplay()` first: bidi controls are deleted,
 runs of control characters collapse to a single space, the line is cut to

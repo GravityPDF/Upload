@@ -435,8 +435,8 @@ always been. The English string **is** the message id, so there is nothing to ma
 `callable` with `Translation::setTranslator()` and `getErrors()` is looked up through it. Nothing
 else is: `Exception::getMessage()` stays English for your log.
 
-[docs/translation/](docs/translation/README.md) covers the hook, the catalogue, the `__()`
-marker and what a broken translation cannot do, with a working adapter for Symfony, Laravel,
+[docs/translation/](docs/translation/README.md) covers the hook, the catalogue, the
+`Translation::__()` marker and what a broken translation cannot do, with a working adapter for Symfony, Laravel,
 php-gettext and WordPress.
 
 ## Reacting to a failure rather than showing it

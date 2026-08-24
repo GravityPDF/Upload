@@ -35,7 +35,6 @@ error_reporting(E_ALL & ~E_DEPRECATED);
 
 require __DIR__ . '/vendor/autoload.php';
 require __DIR__ . '/global-underscore.php';
-require __DIR__ . '/marker-import.php';
 
 use GravityPdf\Upload\Translation;
 
@@ -242,18 +241,6 @@ eval(str_replace("'es.mo'", var_export($moFixture, true), $snippet));
 check($failures, 'php-gettext', $translated, $german, $untranslated);
 
 Translation::resetTranslator();
-
-/* ------------------------------------- the WordPress recipe's leading backslash */
-
-if (\GravityPdf\Upload\ReadmeCheck\markerIsImported() !== true) {
-    $failures[] = 'The fixture that proves the backslash matters no longer imports the marker, '
-        . 'so it proves nothing';
-}
-
-if (\GravityPdf\Upload\ReadmeCheck\globalUnderscoreWins() !== 'WORDPRESS') {
-    $failures[] = 'WordPress: `\\__()` reached this library\'s marker instead of the global one, '
-        . 'so a translator written the documented way would silently do nothing';
-}
 
 if ($failures !== []) {
     fwrite(

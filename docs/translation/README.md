@@ -23,12 +23,11 @@ In the source each string is marked, not translated:
 ```php
 use GravityPdf\Upload\ErrorCode;
 use GravityPdf\Upload\Exception;
-
-use function GravityPdf\Upload\__;
+use GravityPdf\Upload\Translation;
 
 throw new Exception(
     /* translators: %1$s: the largest accepted size, in megabytes */
-    __('File size is too large. Must be no more than %1$s MB'),
+    Translation::__('File size is too large. Must be no more than %1$s MB'),
     $fileInfo,
     ErrorCode::SIZE_TOO_LARGE,
     [$amount]

@@ -37,9 +37,8 @@ use GravityPdf\Upload\AsciiCase;
 use GravityPdf\Upload\ErrorCode;
 use GravityPdf\Upload\Exception;
 use GravityPdf\Upload\FileInfoInterface;
+use GravityPdf\Upload\Translation;
 use GravityPdf\Upload\ValidationInterface;
-
-use function GravityPdf\Upload\__;
 
 /**
  * Validate Upload Media Type
@@ -94,7 +93,7 @@ class Mimetype implements ValidationInterface
         if (!in_array($mimetype, $this->mimetypes, true)) {
             throw new Exception(
                 /* translators: %1$s: comma-separated list of the accepted media types */
-                __('Invalid mimetype. Must be one of: %1$s'),
+                Translation::__('Invalid mimetype. Must be one of: %1$s'),
                 $fileInfo,
                 ErrorCode::MIMETYPE_NOT_ALLOWED,
                 [implode(', ', $this->mimetypes)]
