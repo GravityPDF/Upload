@@ -115,6 +115,10 @@ jobs:
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.35.5
         with:
           php-version: ${{ matrix.php }}
+          # Named because the Windows builds enable neither by default, where the Linux ones
+          # ship both: `ext-fileinfo` is this library's only requirement and PHPUnit declares
+          # `ext-mbstring`, so `composer install` cannot resolve without them.
+          extensions: fileinfo, mbstring
 
       - name: Install Composer dependencies
         run: composer install --no-scripts
