@@ -617,7 +617,7 @@ class FileSystemTest extends TestCase
 
         foreach (['evil.php' . $space, 'evil.' . $space . 'php', $space . 'con.txt'] as $name) {
             $this->assertSame(
-                $workingDirectory . '/' . $name,
+                $this->destinationOf($workingDirectory, $name),
                 $storage->upload($this->makeHostileFileInfo($name)),
                 bin2hex($name)
             );
@@ -949,7 +949,7 @@ class FileSystemTest extends TestCase
 
         $stored = $storage->upload(new FileInfo($source, 'upload.txt'));
 
-        $this->assertSame($workingDirectory . '/upload.txt', $stored);
+        $this->assertSame($this->destinationOf($workingDirectory, 'upload.txt'), $stored);
         $this->assertStringEqualsFile($stored, 'tmp file bytes');
         $this->assertSame('0640', $this->modeOf($stored));
 
@@ -1038,7 +1038,7 @@ class FileSystemTest extends TestCase
         try {
             $stored = $storage->upload(new FileInfo($source, 'upload.txt'));
 
-            $this->assertSame($workingDirectory . '/upload.txt', $stored);
+            $this->assertSame($this->destinationOf($workingDirectory, 'upload.txt'), $stored);
             $this->assertStringEqualsFile($stored, 'bytes from another file system');
             $this->assertSame('0640', $this->modeOf($stored));
             $this->assertFileDoesNotExist($source);
@@ -1092,7 +1092,7 @@ class FileSystemTest extends TestCase
 
         $stored = $this->makeAcceptingStorage($workingDirectory)->upload($fileInfo);
 
-        $this->assertSame($workingDirectory . '/upload.txt', $stored);
+        $this->assertSame($this->destinationOf($workingDirectory, 'upload.txt'), $stored);
         $this->assertStringEqualsFile($stored, 'tmp file bytes');
         $this->assertSame('0640', $this->modeOf($stored));
 

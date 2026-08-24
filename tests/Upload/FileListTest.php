@@ -421,8 +421,9 @@ class FileListTest extends TestCase
 
         $this->assertTrue($list->upload());
 
-        /* The interior dot is rewritten by `FileInfo::setName()`, as on the `$_FILES` path */
-        $stored = $workingDirectory . '/holiday-photo.txt';
+        /* The interior dot is rewritten by `FileInfo::setName()`, as on the `$_FILES` path.
+           Joined with `DIRECTORY_SEPARATOR` because that is how storage composes a locator. */
+        $stored = $workingDirectory . DIRECTORY_SEPARATOR . 'holiday-photo.txt';
 
         $this->assertSame([$stored], $list->getUploadedLocators());
         $this->assertFileExists($stored);
