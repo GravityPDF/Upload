@@ -143,10 +143,47 @@ final class Filename
      */
     public static function sanitizeNameWithExtension(string $filename, ?array $reserved = null): string
     {
-        $extension = self::acceptExtension((string) pathinfo($filename, PATHINFO_EXTENSION), $reserved);
-        $name = self::sanitizeName((string) pathinfo($filename, PATHINFO_FILENAME), $extension, $reserved);
+        list($name, $extension) = self::splitNameAndExtension($filename);
+
+        $extension = self::acceptExtension($extension, $reserved);
+        $name = self::sanitizeName($name, $extension, $reserved);
 
         return $extension === '' ? $name : sprintf('%s.%s', $name, $extension);
+    }
+
+    /**
+     * Split a client-supplied filename into the name and the extension
+     *
+     * What `pathinfo()`'s `PATHINFO_FILENAME` and `PATHINFO_EXTENSION` answer, except that `/`
+     * is the only separator. `pathinfo()` treats `\` as one on Windows and not on POSIX, so the
+     * same name split two ways: `a\b.txt` was stored as `a-b.txt` here and `b.txt` there.
+     * `rewriteCharacters()` rewrites `\` to `-`, so the rule both layers share is that a
+     * backslash is a character in the name — and a rule cannot depend on which platform is
+     * applying it.
+     *
+     * Trailing slashes go first, as `basename()` drops them, so `photos/` still names `photos`.
+     *
+     * @return array<int, string> The name and the extension, either of which may be `''`
+     * @phpstan-return array{0: string, 1: string}
+     *
+     * @internal Not part of the public API
+     */
+    public static function splitNameAndExtension(string $filename): array
+    {
+        $filename = rtrim($filename, '/');
+
+        $separator = strrpos($filename, '/');
+        $basename = $separator === false ? $filename : substr($filename, $separator + 1);
+
+        /* The last dot, wherever it is: `.htaccess` is all extension and no name, which is what
+           `pathinfo()` answers and what the storage deny-list is then handed. */
+        $dot = strrpos($basename, '.');
+
+        if ($dot === false) {
+            return [$basename, ''];
+        }
+
+        return [substr($basename, 0, $dot), substr($basename, $dot + 1)];
     }
 
     /**

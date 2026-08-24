@@ -277,19 +277,19 @@ class FileTest extends TestCase
         );
 
         $callbackBeforeValidate = function (FileInfoInterface $fileInfo) {
-            echo 'BeforeValidate: ' . $fileInfo->getName(), PHP_EOL;
+            echo 'BeforeValidate: ' . $fileInfo->getName(), "\n";
         };
 
         $callbackAfterValidate = function (FileInfoInterface $fileInfo) {
-            echo 'AfterValidate: ' . $fileInfo->getName(), PHP_EOL;
+            echo 'AfterValidate: ' . $fileInfo->getName(), "\n";
         };
 
         $callbackBeforeUpload = function (FileInfoInterface $fileInfo) {
-            echo 'BeforeUpload: ' . $fileInfo->getName(), PHP_EOL;
+            echo 'BeforeUpload: ' . $fileInfo->getName(), "\n";
         };
 
         $callbackAfterUpload = function (FileInfoInterface $fileInfo) {
-            echo 'AfterUpload: ' . $fileInfo->getName(), PHP_EOL;
+            echo 'AfterUpload: ' . $fileInfo->getName(), "\n";
         };
 
         $file = new File('multiple', $this->storage);

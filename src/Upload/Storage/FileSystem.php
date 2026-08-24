@@ -453,8 +453,9 @@ class FileSystem implements StorageInterface
            is the destination only if the directory entry is that same file; a symlink has an
            inode of its own, so a mismatch means the name was a link.
 
-           POSIX only. Before PHP 7.4 `stat()` on Windows reports `ino` as 0 and `dev` as the
-           drive number, so this comparison degrades to same-drive and detects nothing. Windows
+           POSIX only. Before PHP 7.4 `stat()` on Windows reports `ino` as 0, so this
+           comparison has no information — the guard below skips it rather than reading no
+           information as a mismatch, which refused every upload on that platform. Windows
            symlinks need a privilege an uploading process should not hold, so the residual risk
            is small, but the symlink protections in this class are not load-bearing there. */
         $entry = $this->lstatEntry($destinationFile);
@@ -473,7 +474,17 @@ class FileSystem implements StorageInterface
             );
         }
 
-        if ($opened['dev'] !== $entry['dev'] || $opened['ino'] !== $entry['ino']) {
+        /* An inode of 0 is what Windows reports before PHP 7.4, for both stats, so the
+           comparison below has nothing to compare. Treating that as a mismatch answered
+           'Destination is a symbolic link' to every reservation, which is every upload the
+           default configuration makes — the platform could not store a file at all. Skipped
+           rather than failed: nothing has been established either way, and the symlink
+           protections here were never load-bearing on Windows, where a symlink needs a
+           privilege an uploading process should not hold. A real file has a real inode, so
+           this gives up nothing on POSIX. */
+        $identified = $opened['ino'] !== 0 && $entry['ino'] !== 0;
+
+        if ($identified && ($opened['dev'] !== $entry['dev'] || $opened['ino'] !== $entry['ino'])) {
             /* The write is already refused at this point and nothing of the victim's was
                overwritten, but `x` has created a file at the far end of the link, outside the
                upload directory. Take that back too. */
@@ -512,12 +523,26 @@ class FileSystem implements StorageInterface
      */
     private function releaseReservation(string $destinationFile, $opened): void
     {
-        $target = @readlink($destinationFile);
+        /* `is_link()` rather than a failed `readlink()`, which is not the same question on
+           every platform: PHP's Windows `readlink()` answers a *regular file* with its own
+           canonical path instead of failing, so the placeholder took the link branch below,
+           matched nothing there and was never removed — leaving the caller's name held
+           against every later upload. The stat cache is cleared because `reserveDestination()`
+           has already lstat'd this path. */
+        clearstatcache(true, $destinationFile);
 
-        if ($target === false) {
+        if (!is_link($destinationFile)) {
             /* Not a link, so the name is the file. `unlink()` does not follow one in any case. */
             @unlink($destinationFile);
 
+            return;
+        }
+
+        $target = @readlink($destinationFile);
+
+        /* A link this cannot read the target of: neither it nor whatever it points at is this
+           upload's to remove. */
+        if ($target === false) {
             return;
         }
 

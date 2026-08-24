@@ -617,7 +617,7 @@ class FileSystemTest extends TestCase
 
         foreach (['evil.php' . $space, 'evil.' . $space . 'php', $space . 'con.txt'] as $name) {
             $this->assertSame(
-                $workingDirectory . '/' . $name,
+                $this->destinationOf($workingDirectory, $name),
                 $storage->upload($this->makeHostileFileInfo($name)),
                 bin2hex($name)
             );
@@ -718,14 +718,40 @@ class FileSystemTest extends TestCase
     }
 
     /**
+     * The two cases carrying control characters, which NTFS refuses in a filename outright —
+     * `touch()` cannot create the colliding file, so there is nothing for the reservation to
+     * find in the way. Split out and grouped rather than skipped, since a data set cannot
+     * carry a group of its own.
+     *
+     * @dataProvider providerNamesWithControlCharactersASeamMayReturn
+     *
+     * @group posix
+     */
+    public function testCollisionMessageSanitizesControlCharactersInTheNameItQuotes(
+        string $name,
+        string $message
+    ): void {
+        $this->testCollisionMessageSanitizesTheNameItQuotes($name, $message);
+    }
+
+    /**
+     * @return array<string, array<int, string>>
+     */
+    public function providerNamesWithControlCharactersASeamMayReturn(): array
+    {
+        return [
+            'controls collapsed' => ["report\x07\x08.txt", 'A file named "report .txt" already exists'],
+            'nothing but controls' => ["\x01\x02", 'A file with that name already exists'],
+        ];
+    }
+
+    /**
      * @return array<string, array<int, string>>
      */
     public function providerNamesAnOverriddenSeamMayReturn(): array
     {
         return [
-            'controls collapsed' => ["report\x07\x08.txt", 'A file named "report .txt" already exists'],
             'bidi deleted' => ["resume\xE2\x80\xAEtxt.gpj", 'A file named "resumetxt.gpj" already exists'],
-            'nothing but controls' => ["\x01\x02", 'A file with that name already exists'],
         ];
     }
 
@@ -789,7 +815,7 @@ class FileSystemTest extends TestCase
         $storage = $this->makeStorage($workingDirectory, true);
 
         $this->assertSame(
-            $workingDirectory . '/report.txt',
+            $this->destinationOf($workingDirectory, 'report.txt'),
             $storage->upload($this->makeHostileFileInfo('report.txt. '))
         );
     }
@@ -923,7 +949,7 @@ class FileSystemTest extends TestCase
 
         $stored = $storage->upload(new FileInfo($source, 'upload.txt'));
 
-        $this->assertSame($workingDirectory . '/upload.txt', $stored);
+        $this->assertSame($this->destinationOf($workingDirectory, 'upload.txt'), $stored);
         $this->assertStringEqualsFile($stored, 'tmp file bytes');
         $this->assertSame('0640', $this->modeOf($stored));
 
@@ -1012,7 +1038,7 @@ class FileSystemTest extends TestCase
         try {
             $stored = $storage->upload(new FileInfo($source, 'upload.txt'));
 
-            $this->assertSame($workingDirectory . '/upload.txt', $stored);
+            $this->assertSame($this->destinationOf($workingDirectory, 'upload.txt'), $stored);
             $this->assertStringEqualsFile($stored, 'bytes from another file system');
             $this->assertSame('0640', $this->modeOf($stored));
             $this->assertFileDoesNotExist($source);
@@ -1066,7 +1092,7 @@ class FileSystemTest extends TestCase
 
         $stored = $this->makeAcceptingStorage($workingDirectory)->upload($fileInfo);
 
-        $this->assertSame($workingDirectory . '/upload.txt', $stored);
+        $this->assertSame($this->destinationOf($workingDirectory, 'upload.txt'), $stored);
         $this->assertStringEqualsFile($stored, 'tmp file bytes');
         $this->assertSame('0640', $this->modeOf($stored));
 
@@ -1117,6 +1143,19 @@ class FileSystemTest extends TestCase
     /**
      * A scratch directory that is removed again in tear_down()
      */
+    /**
+     * The path `upload()` will return for a name stored in this directory
+     *
+     * It composes that as `$this->directory . $filename`, and the constructor ends the
+     * directory with `DIRECTORY_SEPARATOR`. These tests build their working directory with
+     * `/`, which PHP treats as the same path on Windows but is not the same *string* — so an
+     * assertion joining with `/` fails there against a file that was stored correctly.
+     */
+    protected function destinationOf(string $directory, string $filename): string
+    {
+        return $directory . DIRECTORY_SEPARATOR . $filename;
+    }
+
     protected function makeWorkingDirectory(): string
     {
         $workingDirectory = sys_get_temp_dir() . '/upload-test-' . uniqid('', true) . '/uploads';
@@ -1163,7 +1202,7 @@ class FileSystemTest extends TestCase
         $workingDirectory = $this->makeWorkingDirectory();
         $storage = $this->makeStorage($workingDirectory, true);
 
-        $this->assertSame($workingDirectory . '/' . $stored, $storage->upload($fileInfo));
+        $this->assertSame($this->destinationOf($workingDirectory, $stored), $storage->upload($fileInfo));
         $this->assertFileExists($workingDirectory . '/' . $stored);
     }
 
@@ -1284,7 +1323,7 @@ class FileSystemTest extends TestCase
         $storage = $this->makeStorage($workingDirectory, true);
 
         $this->assertSame(
-            $workingDirectory . '/foo.txt',
+            $this->destinationOf($workingDirectory, 'foo.txt'),
             $storage->upload(new FileInfo($this->assetsDirectory . '/foo.txt', 'foo.txt'))
         );
         $this->assertSame($workingDirectory, $storage->getDirectory());
@@ -1351,6 +1390,40 @@ class FileSystemTest extends TestCase
         }
 
         $this->assertFileDoesNotExist($workingDirectory . '/foo.txt');
+    }
+
+    /**
+     * Windows before PHP 7.4 reports `ino` as 0 for both stats, so the inode comparison has
+     * nothing to compare. Reading that as a mismatch answered `'Destination is a symbolic
+     * link'` to every reservation — which is every upload the default configuration makes, so
+     * the platform could not store a single file. `dev` differs here as well, to show it is
+     * the missing inode that decides and not a lucky match on the drive.
+     *
+     * Stubbed rather than run on Windows: this has to hold on the platform the suite is
+     * actually asserted on, and `lstatEntry()` is the seam for exactly this.
+     */
+    public function testAReservationIsNotRefusedWhereTheInodeIsUnavailable(): void
+    {
+        $workingDirectory = $this->makeWorkingDirectory();
+
+        $storage = $this->getMockBuilder(FileSystem::class)
+            ->setConstructorArgs([$workingDirectory, false])
+            ->onlyMethods(['moveUploadedFile', 'lstatEntry'])
+            ->getMock();
+
+        $storage->method('moveUploadedFile')->willReturnCallback(
+            static function (string $source, string $destination): bool {
+                return copy($source, $destination);
+            }
+        );
+
+        /* What that platform answers: no inode, and a `dev` of its own */
+        $storage->method('lstatEntry')->willReturn(['dev' => 2, 'ino' => 0]);
+
+        $stored = $storage->upload(new FileInfo($this->assetsDirectory . '/foo.txt', 'foo.txt'));
+
+        $this->assertSame($this->destinationOf($workingDirectory, 'foo.txt'), $stored);
+        $this->assertFileExists($stored);
     }
 
     /**
@@ -1460,7 +1533,7 @@ class FileSystemTest extends TestCase
 
         $this->assertSame([], $storage->getBlockedExtensions());
         $this->assertSame(
-            $workingDirectory . '/shell.php',
+            $this->destinationOf($workingDirectory, 'shell.php'),
             $storage->upload($this->makeHostileFileInfo('shell.php'))
         );
     }
