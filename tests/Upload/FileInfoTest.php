@@ -150,6 +150,11 @@ class FileInfoTest extends TestCase
             ['unnamed-file', 'txt', "con\xC3.txt"],
             ['unnamed-file', '', "nul\x80"],
             ['unnamed-file', '', "com1\x80_"],
+
+            /* The name shares 255 bytes with `jpeg`, so its budget is 250 and the cut falls
+               between the two bytes of the character at 250. The polyfill ships no
+               `mb_strcut()`, so the cut is a byte cut there and left a partial sequence. */
+            [str_repeat('a', 249), 'jpeg', str_repeat('a', 249) . "\u{00E9}" . str_repeat('b', 40) . '.jpeg'],
         ];
     }
 
@@ -379,6 +384,61 @@ class FileInfoTest extends TestCase
 
         $this->assertSame('p', $file->getExtension());
         $this->assertSame('evil-p-h.p', $file->getNameWithExtension());
+    }
+
+    /**
+     * `setName()` trims spaces from the ends of a name and collapses runs of them, and both are
+     * `trim()`/`preg_replace()` on ASCII. A space that is not `U+0020` is none of their business
+     * and survives wherever it sits, which is what stops a name being silently rewritten into a
+     * different one.
+     *
+     * @dataProvider providerUnicodeSpaces
+     */
+    public function testAUnicodeSpaceSurvivesAnywhereInAName(string $space): void
+    {
+        $asset = __DIR__ . '/assets/foo.txt';
+
+        $this->assertSame("{$space}ab", (new FileInfo($asset, "{$space}ab.png"))->getName(), 'leading');
+        $this->assertSame("a{$space}b", (new FileInfo($asset, "a{$space}b.png"))->getName(), 'interior');
+        $this->assertSame("ab{$space}", (new FileInfo($asset, "ab{$space}.png"))->getName(), 'trailing');
+    }
+
+    /**
+     * The extension is the half that validates rather than rewrites, so anything but letters and
+     * digits discards it whole — a space included, wherever in the extension it sits. Only the
+     * `U+0020` case is trimmed off first, which `providerSetNameSanitizing` covers.
+     *
+     * @dataProvider providerUnicodeSpaces
+     */
+    public function testAUnicodeSpaceDiscardsTheExtension(string $space): void
+    {
+        $asset = __DIR__ . '/assets/foo.txt';
+
+        $this->assertSame('', (new FileInfo($asset, "ab.{$space}png"))->getExtension(), 'leading');
+        $this->assertSame('', (new FileInfo($asset, "ab.p{$space}ng"))->getExtension(), 'interior');
+        $this->assertSame('', (new FileInfo($asset, "ab.png{$space}"))->getExtension(), 'trailing');
+    }
+
+    /**
+     * A reserved device name is the component before the first dot with its spaces taken off,
+     * and Windows takes off `U+0020` alone. `\u{00A0}con.txt` is a file, not the console.
+     *
+     * @dataProvider providerUnicodeSpaces
+     */
+    public function testAUnicodeSpaceDoesNotMakeAReservedDeviceName(string $space): void
+    {
+        $asset = __DIR__ . '/assets/foo.txt';
+
+        $this->assertSame("{$space}con", (new FileInfo($asset, "{$space}con.txt"))->getName());
+        $this->assertSame("con{$space}", (new FileInfo($asset, "con{$space}.txt"))->getName());
+    }
+
+    /**
+     * @return array<string, array<int, string>>
+     */
+    public function providerUnicodeSpaces(): array
+    {
+        return UnicodeSpaces::providerRows();
     }
 
     /**

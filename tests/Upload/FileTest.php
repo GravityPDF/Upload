@@ -1761,6 +1761,24 @@ class FileTest extends TestCase
         $this->assertSame(['single.txt: Rejected by the scanner'], $file->getErrors());
     }
 
+    /**
+     * A validation of your own decides what goes in `getErrors()`. `renderMessage()`
+     * sanitizes, and sanitizing bounds the length.
+     */
+    public function testARunawayValidationMessageIsBounded(): void
+    {
+        $file = new File('single', $this->storage);
+        $file->addValidation(new class implements ValidationInterface {
+            public function validate(FileInfoInterface $fileInfo): void
+            {
+                throw new Exception(str_repeat('a', 100000));
+            }
+        });
+
+        $this->assertFalse($file->isValid());
+        $this->assertSame(Filename::MAX_DISPLAY_LENGTH, strlen($file->getErrors()[0]));
+    }
+
     public function testAnAbsorbedThrowableIsReportedAsAnIncompleteValidation(): void
     {
         $file = new File('single', $this->storage);

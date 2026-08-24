@@ -511,8 +511,9 @@ translated at the throw rather than at the render, and `Exception::getMessage()`
 the English you search your log for. `xgettext` extracts either form.
 
 Your message goes through `Filename::sanitizeForDisplay()` first: bidi controls are deleted,
-runs of control characters collapse to a single space, surrounding whitespace is trimmed, and
-the result is forced to valid UTF-8 where `ext-mbstring` is loaded. A message built from user
+runs of control characters collapse to a single space, the line is cut to
+`Filename::MAX_DISPLAY_LENGTH`, surrounding whitespace is trimmed, and the result is forced to
+valid UTF-8 where `ext-mbstring` is loaded. A message built from user
 input cannot forge a log line, move a terminal cursor, or make
 `json_encode($file->getErrors())` return `false`. It is still not escaped, so escape on
 output.
@@ -732,14 +733,17 @@ your own.
 |---|---|
 | PHP | `php` `php2` `php3` `php4` `php5` `php6` `php7` `php8` `phps` `phtml` `phtm` `phar` `pht` `inc` |
 | Server-side includes | `shtml` `shtm` `stm` |
-| CGI and scripts | `cgi` `fcgi` `pl` `py` `rb` `sh` `bash` `ps1` |
+| Apache mod_asis | `asis` |
+| CGI and scripts | `cgi` `fcgi` `pl` `py` `rb` `sh` `bash` `ps1` `erb` `rhtml` |
 | Java | `jsp` `jspx` `jspf` `jsw` `jsv` `jshtml` `jar` `war` |
 | ASP / ASP.NET | `asp` `aspx` `asa` `asax` `ascx` `ashx` `asmx` `cer` `cshtml` `vbhtml` |
+| Legacy IIS | `htr` `idc` `printer` |
+| ColdFusion | `cfm` `cfml` `cfc` |
 | Windows binaries | `exe` `dll` `com` `bat` `cmd` `msi` `scr` `vbs` `ws` `wsf` `hta` |
 | Server configuration | `htaccess` `htpasswd` `ini` `conf` `config` |
 | Markup and script | `html` `htm` `xhtml` `xht` `xhtm` `svg` `svgz` `xml` `xsl` `xslt` `js` `mjs` `swf` `mht` `mhtml` |
 
-The first seven groups are `FileSystem::EXECUTABLE_EXTENSIONS`, which a server runs. The
+Every group but the last is `FileSystem::EXECUTABLE_EXTENSIONS`, which a server runs. The
 last is `FileSystem::MARKUP_EXTENSIONS`, which a browser renders. Serving one from your own
 origin is stored XSS; SVG is in that group because it carries `<script>` and event handlers.
 
@@ -927,8 +931,9 @@ a public extension point and inventing a filename is not storage's job.
 | Member | Description |
 |---|---|
 | `Filename::sanitizeNameWithExtension(string $filename): string` | The whole treatment for one string: splits name from extension, rewrites the first, validates the second, fits both to `MAX_LENGTH`. This is what `getErrors()` runs client-supplied names through. |
-| `Filename::sanitizeForDisplay(string $value): string` | The same character sets applied to prose rather than to a name: bidi controls deleted, runs of control characters collapsed to a single space, surrounding whitespace trimmed, and the result forced to valid UTF-8 where `ext-mbstring` is loaded. No length limit, no device-name blanking, and `%`, `/` and dots are left alone. **It does not escape** `<`, `>`, `&` or `"`, so escape on output as well. This is what `getErrors()` runs a validation failure's message through; use it for error strings of your own. |
+| `Filename::sanitizeForDisplay(string $value, int $maxLength = Filename::MAX_DISPLAY_LENGTH): string` | The same character sets applied to prose rather than to a name: bidi controls deleted, runs of control characters collapsed to a single space, the result cut to `$maxLength` bytes, surrounding whitespace trimmed, and the result forced to valid UTF-8 where `ext-mbstring` is loaded. No device-name blanking, and `%`, `/` and dots are left alone. **It does not escape** `<`, `>`, `&` or `"`, so escape on output as well. This is what `getErrors()` runs a validation failure's message through; use it for error strings of your own. |
 | `Filename::MAX_LENGTH` / `MAX_EXTENSION_LENGTH` | `255` and `32` bytes. The name's budget is `MAX_LENGTH` minus the extension and its dot. |
+| `Filename::MAX_DISPLAY_LENGTH` | `2048` bytes, the bound `sanitizeForDisplay()` applies to prose. Longer than any message this library composes, so only a message of your own reaches it. |
 | `Filename::RESERVED_WINDOWS_NAMES` | The device names `setName()` blanks: `con`, `nul`, `lpt1`, and the `COM0`/`LPT0` and superscript variants. |
 | `Filename::BIDI_CONTROLS` / `CONTROL_CHARACTERS` | The text-direction characters `setName()` deletes, and the control bytes it rewrites. `FileSystem` refuses a name still carrying either. |
 

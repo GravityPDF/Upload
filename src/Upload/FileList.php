@@ -146,15 +146,14 @@ class FileList extends File
      * and those rules report `user.avatar` as `user-avatar` and a key called `con` as
      * `unnamed-file`.
      *
-     * `MAX_LENGTH` is the one filename rule worth keeping: a key is a field name the client
-     * chose, so nothing else bounds it. Cut before sanitizing, so a split sequence is repaired
-     * after.
+     * `MAX_LENGTH` is the one filename rule worth keeping: a field name is recognisable in
+     * 255 bytes, and `MAX_DISPLAY_LENGTH` is more than one needs.
      *
      * @param int|string $key
      */
     private function describeKey($key): string
     {
-        return Filename::sanitizeForDisplay(substr((string) $key, 0, Filename::MAX_LENGTH));
+        return Filename::sanitizeForDisplay((string) $key, Filename::MAX_LENGTH);
     }
 
     /**
