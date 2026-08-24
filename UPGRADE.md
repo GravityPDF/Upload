@@ -324,6 +324,11 @@ Each of these is listed in full in the [changelog](CHANGELOG.md).
   sequence no longer reports every error twice.
 * `$file[0] = $value` throws `InvalidArgumentException` unless the value is a
   `FileInfoInterface`.
+* **On Windows, a backslash in a client filename is no longer treated as a path separator.**
+  `pathinfo()` splits on it there and not on POSIX, so `a\b.txt` was stored as `b.txt` under
+  Windows and `a-b.txt` everywhere else. It is now `a-b.txt` on both, which is what
+  `Filename`'s documented rules always said. A Windows deployment relying on the implicit
+  basename-ing gets longer names than before; nothing on POSIX changes.
 * `$file[] = $value` appends. In 3.x it wrote the string key `''`, so a second append
   overwrote the first and `getUploadedLocators()` came back with a key that is not an offset.
 * **`Validation\Size` now throws `InvalidArgumentException` for a bound it cannot use**: one
