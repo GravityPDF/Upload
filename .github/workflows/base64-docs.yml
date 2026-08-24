@@ -1,4 +1,4 @@
-name: PSR-7 bridge
+name: Base64 bridge
 
 on:
   push:
@@ -17,11 +17,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
   cancel-in-progress: true
 
-# docs/psr7.md tells a PSR-7 caller to write a bridge, so that code has to keep working. This
-# runs the page's own snippets — read out of the Markdown, not copied — against two real PSR-7
-# implementations. Their versions live in tools/psr7-readme/composer.json so the library itself
-# continues to require nothing but ext-fileinfo. The TmpUploadFile override and the tmp-file
-# cleanup come from README.md, where the shared FileList path declares them for both bridges.
+# docs/base64-uploads.md tells a caller to write a bridge, so that code has to keep working.
+# This runs the page's own snippets — read out of the Markdown, not copied — against the
+# library. A base64 payload is a string in the request body, so unlike the PSR-7 bridge there is
+# no third-party implementation to run it against and the check needs no manifest of its own.
 jobs:
   run:
     name: PHP ${{ matrix.php }}
@@ -40,5 +39,10 @@ jobs:
         with:
           php-version: ${{ matrix.php }}
 
-      - name: Run the documented PSR-7 bridge
-        run: composer psr7-readme
+      # The autoloader the check runs under is the one a consumer gets, src/Upload/i18n.php
+      # included: an unresolved `files` entry reports __() as undefined from inside File.php.
+      - name: Install the library
+        run: composer install --no-dev --no-interaction --no-progress
+
+      - name: Run the documented base64 bridge
+        run: composer base64-docs
