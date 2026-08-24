@@ -93,13 +93,14 @@ jobs:
   # nothing. Excluded by group rather than skipped, so `cross-file-system` keeps the single
   # `markTestSkipped()` its `--fail-on-skipped` guard depends on.
   #
-  # `continue-on-error` until this has been green once: nothing in the project has ever run on
-  # Windows, so the first runs are discovery rather than a gate. Remove it, and this comment,
-  # once the job passes — a red job nobody may merge past is the point of adding it.
+  # It found two library bugs on its first outing, both on the default `$overwrite = false`
+  # path and neither reachable from Linux: the reservation's inode comparison read Windows'
+  # absent inode as a mismatch and refused every upload, and `releaseReservation()` inferred
+  # "not a symlink" from a failed `readlink()`, which answers a regular file with its own path
+  # there. It is a gate now, so a third does not go unnoticed.
   windows:
     name: ${{ matrix.php }} on windows-latest
     runs-on: windows-latest
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
