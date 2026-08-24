@@ -8,7 +8,7 @@ configuration value that happened to be missing.
 > [!WARNING]
 > Every call on this page removes a control that is on because an upload is attacker-supplied
 > input. None of them is needed to accept uploads: the defaults are a working configuration, and
-> every example in the [README](../README.md) runs under them. Before using one, read what it
+> every example in the [README](../README.md) runs under them. Each row below says what one
 > stops applying.
 
 Each is a separate call, so turning one off leaves the others in place:
@@ -34,8 +34,7 @@ $file->allowUnvalidatedUploads();
 non-empty list and throws otherwise, so a missing config value cannot silently disable the
 check.
 
-`acceptFilesNotUploadedByPhp()` is the one to think hardest about, and a `$_FILES` application
-never needs it. It exists for [uploads from another source](../README.md#uploads-from-another-source), and
-belongs with an `isUploadedFile()` override that asserts where the file came from. Overriding it
-to `return true;` gives the check up rather than replacing it, which leaves nothing at either
-end.
+`acceptFilesNotUploadedByPhp()` has no use in a `$_FILES` application. It exists for
+[uploads from another source](../README.md#uploads-from-another-source), and belongs with an
+`isUploadedFile()` override that asserts where the file came from. Overriding it to
+`return true;` gives the check up rather than replacing it, which leaves nothing at either end.

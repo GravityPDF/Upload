@@ -47,7 +47,7 @@ error, so it doesn't appear in `getErrors()`.
 
 Only the last dot-separated component is an extension. `FileInfo::setName()` rewrites
 interior dots to hyphens as it did in 3.x, so `release.config.zip` stores as
-`release-config.zip` and is fine. `release.config` and `settings.ini` are refused. A file
+`release-config.zip` and is written. `release.config` and `settings.ini` are refused. A file
 named just `php`, with no extension, is still stored. (`upload()` checks every component
 regardless, since a custom `FileInfoInterface` can hand it a name `setName()` never saw.)
 
@@ -74,7 +74,7 @@ $storage->allowAnyExtension();
 Two things to check if you pass your own list:
 
 * **Entries are split on dots.** `'tar.gz'` never matched anything in 3.x; it now blocks
-  `tar` and `gz` separately. Your list may block more than you meant.
+  `tar` and `gz` separately, so a dotted entry covers more than it names.
 * **`blockExtensions()` requires a non-empty array** and throws on `[]`, so a missing
   config value can't quietly disable the check. `allowAnyExtension()` is the only way to
   empty the list.

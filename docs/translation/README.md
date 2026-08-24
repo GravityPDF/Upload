@@ -1,7 +1,7 @@
 # Translating error messages
 
-No translations ship, and you do not need any: with no translator installed, every message is
-the English string it has always been. Install one and `getErrors()` is looked up through it.
+No translations ship. With no translator installed, every message is the English string it has
+always been. Install one and `getErrors()` is looked up through it.
 
 ```php
 use GravityPdf\Upload\Translation;

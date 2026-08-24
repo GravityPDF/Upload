@@ -265,7 +265,7 @@ foreach ($file->getUploadedLocators() as $offset => $storedPath) {
 
 Nothing throws for a rejected file, so the `false` return is the only signal that one was. A
 file that never transferred counts as rejected. **The files that passed are already on disk**,
-so undo them yourself if you abandon the request there.
+so undo them if you abandon the request there.
 
 Storage failures (destination exists, blocked extension, disk full) still throw part-way
 through the batch: `getUploadedLocators()` lists what was written before the throw.
@@ -378,7 +378,7 @@ an exception on the way past leaks every one of them.
 A bridge is caller code: write or decode the incoming file to a tmp path, wrap that path in the
 `TmpUploadFile` above, and hand the result to `FileList`. No dependency, interface or type hint
 is added for either of the two below, and each page's snippets are read out of the Markdown and
-run against this library on every push, so what they show is what works.
+run against this library on every push.
 
 | Source | |
 |---|---|
@@ -430,10 +430,10 @@ needs to reproduce the shipped refusals.
 
 ## Translating error messages
 
-No translations ship, and you do not need any: with no translator installed, every message is
-the English string it has always been. The English string **is** the message id, so there is
-nothing to map — install a `callable` with `Translation::setTranslator()` and `getErrors()` is
-looked up through it. Nothing else is: `Exception::getMessage()` stays English for your log.
+No translations ship. With no translator installed, every message is the English string it has
+always been. The English string **is** the message id, so there is nothing to map — install a
+`callable` with `Translation::setTranslator()` and `getErrors()` is looked up through it. Nothing
+else is: `Exception::getMessage()` stays English for your log.
 
 [docs/translation/](docs/translation/README.md) covers the hook, the catalogue, the `__()`
 marker and what a broken translation cannot do, with a working adapter for Symfony, Laravel,
@@ -441,7 +441,7 @@ php-gettext and WordPress.
 
 ## Reacting to a failure rather than showing it
 
-Messages are for reading. To branch on *why* a file was rejected, use the error code. Codes are
+To branch on *why* a file was rejected, read the error code rather than the message. Codes are
 stable across releases; wording is not:
 
 ```php
@@ -464,8 +464,8 @@ $message = sprintf(\__($error['message_id'], 'my-plugin'), ...$error['args']);
 ```
 
 Guard that `sprintf()` if you do not control the catalogue. On PHP 8 a translation whose
-placeholders do not match throws `ArgumentCountError` — on the failure path, of all places.
-`Translation::render()` handles this and falls back to English.
+placeholders do not match throws `ArgumentCountError`. `Translation::render()` handles this and
+falls back to English.
 
 `Exception::getErrorCode()` returns the same codes, including for storage failures.
 
@@ -483,8 +483,9 @@ predictable destination:
 $file->setName(bin2hex(random_bytes(16)));   // keep the client name as display metadata only
 ```
 
-**Sanitizing is not escaping.** Unsafe characters are rewritten, not escaped. Escape on
-output and use parameterized queries. This applies to `getErrors()`.
+**Sanitizing is not escaping.** Unsafe characters are rewritten, not escaped. A sanitized name,
+and every string in `getErrors()`, still needs escaping on output and binding as a query
+parameter.
 
 **Show `getErrors()`, log the exception.** Every string in `getErrors()` is sanitized and
 describes the submitted file. A storage exception message is sanitized too, but it is not
@@ -551,8 +552,8 @@ $storage->blockExtensions(
 
 Entries are matched one dot-separated component at a time, and an entry containing dots is
 split the same way, so `tar.gz` blocks `tar` and `gz` rather than nothing at all. A leading
-dot is accepted and removed. Check a custom list against that: it may cover more than you
-intended. `getBlockedExtensions()` reports what a call actually configured.
+dot is accepted and removed. A custom list is read the same way, so a dotted entry in it covers
+more components than it names. `getBlockedExtensions()` reports what a call configured.
 
 ## API reference
 

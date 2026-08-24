@@ -3,8 +3,6 @@
 Every class lives in the `GravityPdf\Upload` namespace. The
 [README](../README.md) covers the usage path; this is the signature-by-signature reference.
 
-All classes live in the `GravityPdf\Upload` namespace.
-
 ## File
 
 The entry point. `new File(string $key, StorageInterface $storage)` reads `$_FILES[$key]`
