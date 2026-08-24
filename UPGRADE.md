@@ -324,6 +324,10 @@ Each of these is listed in full in the [changelog](CHANGELOG.md).
   sequence no longer reports every error twice.
 * `$file[0] = $value` throws `InvalidArgumentException` unless the value is a
   `FileInfoInterface`.
+* **Windows under PHP 7.3 could not store a file at all with the default `$overwrite = false`,
+  and now can.** The reservation's inode check read that platform's absent inode as a mismatch
+  and refused every upload as `'Destination is a symbolic link'`. Nothing changes on POSIX or
+  on PHP 7.4 and later.
 * **On Windows, a backslash in a client filename is no longer treated as a path separator.**
   `pathinfo()` splits on it there and not on POSIX, so `a\b.txt` was stored as `b.txt` under
   Windows and `a-b.txt` everywhere else. It is now `a-b.txt` on both, which is what
