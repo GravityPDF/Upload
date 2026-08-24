@@ -43,10 +43,12 @@ use GravityPdf\Upload\StorageInterface;
 /**
  * FileSystem Storage
  *
- * Three protections are on by default and each has to be turned off explicitly: existing files
+ * Four protections are on by default and each has to be turned off explicitly: existing files
  * are never overwritten (`$overwrite`), the extensions in `getDefaultBlockedExtensions()` are
- * never written (`allowAnyExtension()`), and stored files get `DEFAULT_MODE` rather than
- * whatever the process umask allows (`setMode(null)`).
+ * never written (`allowAnyExtension()`), stored files get `DEFAULT_MODE` rather than whatever
+ * the process umask allows (`setMode(null)`), and only a file PHP received as an upload is
+ * stored at all (`acceptFilesNotUploadedByPhp()`). The first three are applied in the
+ * constructor; the fourth is the default state of a property, since it turns nothing on.
  *
  * @author  Josh Lockhart <info@joshlockhart.com>
  * @since   1.0.0
@@ -153,7 +155,11 @@ class FileSystem implements StorageInterface
             throw new InvalidArgumentException('Directory is not writable');
         }
 
-        $this->directory = rtrim($directory, '/') . DIRECTORY_SEPARATOR;
+        /* Both separators, or a Windows path already ending in one gains a second: `/` alone
+           left `C:\uploads\` as `C:\uploads\\`, where `getDirectory()` trims what this line
+           does not. On POSIX the charlist is `/` either way, so a directory legitimately
+           named with a trailing backslash is untouched. */
+        $this->directory = rtrim($directory, DIRECTORY_SEPARATOR . '/') . DIRECTORY_SEPARATOR;
         $this->overwrite = $overwrite;
 
         $this->blockExtensions(self::getDefaultBlockedExtensions());
@@ -603,12 +609,19 @@ class FileSystem implements StorageInterface
      * A leading dot is refused here rather than left to the deny-list, which is a list of
      * extensions and so does not cover `.env` at all.
      *
+     * `Filename::MAX_LENGTH` is refused here for the reason the two character sets are: it is
+     * a rule `FileInfo` applies by truncating, so only a `FileInfoInterface` of your own
+     * arrives over it. Without this the name travelled to the exclusive create and failed on
+     * the file system's own `ENAMETOOLONG`, reported as `DESTINATION_NOT_CREATED` — the code
+     * that is supposed to mean the directory went away.
+     *
      * @throws Exception If the name is not one that may be written
      */
     private function refuseUnsafeName(string $filename, FileInfoInterface $fileInfo): void
     {
         if (
             $filename === ''
+            || strlen($filename) > Filename::MAX_LENGTH
             || strpos($filename, '.') === 0
             || Filename::hasControlCharacters($filename)
             || Filename::hasBidiControls($filename)

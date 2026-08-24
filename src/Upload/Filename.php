@@ -270,10 +270,15 @@ final class Filename
 
     /**
      * How many bytes a name may use once its extension has taken its share
+     *
+     * Floored at zero. `acceptExtension()` caps an extension at `MAX_EXTENSION_LENGTH`, so
+     * nothing in this library spends the whole budget, but `finalize()` takes the extension
+     * from its caller: a longer one made this negative, and a negative length means "cut this
+     * many bytes off the end" to `mb_strcut()`.
      */
     private static function maxNameLength(string $extension): int
     {
-        return self::MAX_LENGTH - ($extension !== '' ? strlen($extension) + 1 : 0);
+        return (int) max(0, self::MAX_LENGTH - ($extension !== '' ? strlen($extension) + 1 : 0));
     }
 
     /**

@@ -160,4 +160,71 @@ class SizeTest extends TestCase
 
         (new GermanSize(5000000))->validate($this->fileOfSize(PHP_INT_MAX));
     }
+
+    /**
+     * A bound that is not a byte count used to reach `scale()`, which is declared `int` and
+     * raised a `TypeError` from inside `validate()` — where `File::runValidations()` absorbs
+     * it as `Validation could not be completed` and shows the developer's misconfiguration to
+     * whoever submitted the file. `InvalidArgumentException` is a `LogicException`, which
+     * that run re-throws.
+     *
+     * @dataProvider provideBoundsThatAreNotByteCounts
+     *
+     * @param mixed $maxSize
+     */
+    public function testRejectsABoundThatIsNotAByteCount($maxSize, string $expected): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage($expected);
+
+        new Size($maxSize); /* @phpstan-ignore-line */
+    }
+
+    /** @return array<string, array<int, mixed>> */
+    public function provideBoundsThatAreNotByteCounts(): array
+    {
+        return [
+            /* What a bound read out of JSON, or arrived at by dividing, actually is */
+            'a float' => [1.5, 'must be an int of bytes or a string such as "5MB", double given'],
+            'null' => [null, 'must be an int of bytes or a string such as "5MB", NULL given'],
+            'an array' => [[5], 'must be an int of bytes or a string such as "5MB", array given'],
+            'a bool' => [true, 'must be an int of bytes or a string such as "5MB", boolean given'],
+            /* Reads as a generous limit and rejects every upload, which is why
+               `File::humanReadableToBytes()` already refuses the string form */
+            'a negative int' => [-1, 'Size::$maxSize cannot be negative, -1 given'],
+        ];
+    }
+
+    public function testRejectsAMinimumThatIsNotAByteCount(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Size::$minSize must be an int of bytes');
+
+        new Size(500, 1.5); /* @phpstan-ignore-line */
+    }
+
+    /**
+     * The maximum is the first argument, so the two are easy to pass the wrong way round —
+     * and a pair in that order accepts nothing at all.
+     */
+    public function testRejectsBoundsNoFileCanSatisfy(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage(
+            'Size was given a minimum of 1000 bytes and a maximum of 10 bytes, which no file '
+            . 'can satisfy. The maximum is the first argument.'
+        );
+
+        new Size(10, 1000);
+    }
+
+    /** Equal bounds accept exactly one size, which is a limit somebody may well mean */
+    public function testAcceptsBoundsThatMeet(): void
+    {
+        $validation = new Size(500, 500);
+
+        $validation->validate($this->fileOfSize(500));
+
+        $this->addToAssertionCount(1);
+    }
 }

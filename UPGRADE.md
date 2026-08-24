@@ -324,6 +324,21 @@ Each of these is listed in full in the [changelog](CHANGELOG.md).
   sequence no longer reports every error twice.
 * `$file[0] = $value` throws `InvalidArgumentException` unless the value is a
   `FileInfoInterface`.
+* `$file[] = $value` appends. In 3.x it wrote the string key `''`, so a second append
+  overwrote the first and `getUploadedLocators()` came back with a key that is not an offset.
+* **`Validation\Size` now throws `InvalidArgumentException` for a bound it cannot use**: one
+  that is not an `int` or a size string, a negative one, or a minimum above the maximum. A
+  float bound previously became a `TypeError` inside `validate()`, which the collection
+  absorbed and reported to the submitter as `Validation could not be completed`. **Check any
+  bound that comes from configuration** — `'5M'` and `5242880` are both fine, `5.0` is not.
+* **`Validation\Mimetype` lowercases its allow-list**, as `Extension` and `FileType` already
+  did. A list written in any other case previously matched nothing and rejected every upload,
+  so **a `new Mimetype(['IMAGE/PNG'])` that appeared to be rejecting files correctly will now
+  start accepting them.** Check any list that is not already lowercase.
+* `Storage\FileSystem` refuses a destination name longer than `Filename::MAX_LENGTH`
+  (255 bytes) with `'Invalid destination file name'`, where it used to fail at the write with
+  `'Destination file could not be created'`. Only reachable from a `FileInfoInterface` of your
+  own; the shipped `FileInfo` truncates to the budget.
 * Sanitized filenames are valid UTF-8 where `ext-mbstring` is available, so they survive
   `json_encode()` and `utf8mb4` columns. Without it the guarantee doesn't hold, as in 3.x.
 * Windows reserved names are matched against the whole extension, so `doc.conf` keeps

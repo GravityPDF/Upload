@@ -1,0 +1,49 @@
+name: Composer Manifest
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# The workflows only read the repository; nothing needs a write-capable GITHUB_TOKEN.
+permissions:
+  contents: read
+
+# Cancels all previous workflow runs for pull requests that have not completed.
+concurrency:
+  # The concurrency group contains the workflow name and the branch name for pull requests
+  # or the commit hash for any other events.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: true
+
+# `package.yml` guards what the dist archive contains. This guards the manifest that describes
+# it: `composer.json` is what Packagist reads and what resolves the supported PHP range, and a
+# schema error there is not something any other job would notice.
+jobs:
+  run:
+    name: Valid and free of advisories
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.0
+
+      - name: Install PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.35.5
+        with:
+          php-version: '8.5'
+
+      # --strict, because this manifest is published: a missing `name` or an unbound version
+      # constraint is an error here where it is only a warning for an application. The three
+      # manifests under tools/ are deliberately not published and pin exact versions, so they
+      # are not checked — that pinning is what makes the doc checks reproducible.
+      - name: Validate composer.json
+        run: composer validate --strict --no-check-lock
+
+      - name: Install Composer dependencies
+        run: composer install --no-scripts --no-interaction
+
+      # The library itself requires nothing but ext-fileinfo, so this is about require-dev:
+      # PHPCS, PHPUnit and parallel-lint run over this repository on every push.
+      - name: Check for security advisories
+        run: composer audit

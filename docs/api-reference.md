@@ -94,6 +94,25 @@ and what each one stops applying is in [Turning the defaults off](turning-the-de
 | `getDirectory(): string` | The destination directory, without trailing slash. |
 | `FileSystem::getDefaultBlockedExtensions(): string[]` | Static: `EXECUTABLE_EXTENSIONS` merged with `MARKUP_EXTENSIONS`, the table under "Extensions blocked by default". |
 
+### Two things it leaves in your upload directory
+
+Both are artefacts of the staged write, and clearing a stale one is the operator's job.
+
+`upload-<32 hex>.part` is the staging file, in the destination directory because `rename()`
+is only atomic within one file system. It exists for the length of one transfer and is
+removed on any failure. A process killed mid-transfer leaves one behind: the name is
+unguessable, so nothing will ever collide with it, and nothing will remove it either.
+
+The other is the 0-byte placeholder, and only with `$overwrite = false`. The destination
+name is claimed before the bytes move, so two concurrent requests cannot both win it, and
+`rename()` replaces the placeholder with the finished upload. A process killed between the
+two leaves a 0-byte file under the caller's name, and every later upload of that name
+reports `A file named "…" already exists` until it is cleared. There is no such window with
+`$overwrite = true`, which does not reserve the name at all.
+
+A sweep for `upload-*.part` and 0-byte files older than your longest plausible request is
+enough. Both are ordinary files; nothing in this library reads them back.
+
 ## Validations
 
 Each implements `ValidationInterface` and throws `Exception` on failure.

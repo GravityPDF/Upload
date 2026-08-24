@@ -112,6 +112,19 @@ class FilenameTest extends TestCase
     }
 
     /**
+     * `acceptExtension()` caps an extension at `MAX_EXTENSION_LENGTH`, so nothing in this
+     * library spends the whole budget — but `finalize()` takes the extension from its caller.
+     * A longer one made the name's budget negative, and a negative length means "cut this many
+     * bytes off the end" to `mb_strcut()` rather than "keep nothing".
+     */
+    public function testFinalizeSurvivesAnExtensionLongerThanTheWholeBudget(): void
+    {
+        $extension = str_repeat('x', Filename::MAX_LENGTH + 45);
+
+        $this->assertSame(Filename::FALLBACK, Filename::finalize('report', $extension));
+    }
+
+    /**
      * @dataProvider provideNamesToSplit
      *
      * @param string[] $expected
