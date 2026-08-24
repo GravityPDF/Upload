@@ -1,12 +1,15 @@
 <?php
 
 /**
- * Runs the PSR-7 bridge from README.md against real PSR-7 implementations
+ * Runs the PSR-7 bridge from docs/psr7.md against real PSR-7 implementations
  *
- * The README tells a caller to write this code, so it has to keep working: every snippet below
- * is read out of README.md at run time rather than copied here. A renamed class, a dropped
+ * The page tells a caller to write this code, so it has to keep working: every snippet below is
+ * read out of the Markdown at run time rather than copied here. A renamed class, a dropped
  * example or a changed signature fails this before it reaches anyone reading the docs. Kept
  * under tools/ with its own manifest, since the library itself takes no PSR-7 dependency.
+ *
+ * The `TmpUploadFile` override and the tmp-file cleanup are read out of README.md, where the
+ * shared `FileList` path declares them once for both bridge pages.
  *
  * Exits non-zero, and says which expectation broke, on any mismatch.
  */
@@ -16,26 +19,31 @@
 
 require __DIR__ . '/vendor/autoload.php';
 
-$readme = (string) file_get_contents(__DIR__ . '/../../README.md');
-
-preg_match_all('/```php\n(.*?)```/s', $readme, $matches);
-
-$blocks = $matches[1];
+$root = __DIR__ . '/../..';
 $failures = [];
 $tmpDirectory = __DIR__ . '/uploads-tmp';
 
-/** The README snippet containing $needle, or a fatal error naming what went missing */
-function readmeBlock(array $blocks, string $needle, string $describes): string
+/** Every fenced PHP snippet in one Markdown file, in the order it appears */
+function documentedBlocks(string $file): array
 {
-    foreach ($blocks as $block) {
+    preg_match_all('/```php\n(.*?)```/s', (string) file_get_contents($file), $matches);
+
+    return $matches[1];
+}
+
+/** The snippet in $file containing $needle, or a fatal error naming what went missing */
+function documentedBlock(string $file, string $needle, string $describes): string
+{
+    foreach (documentedBlocks($file) as $block) {
         if (strpos($block, $needle) !== false) {
             return $block;
         }
     }
 
     fwrite(STDERR, sprintf(
-        "README.md no longer contains the %s example (looked for \"%s\").\n"
+        "%s no longer contains the %s example (looked for \"%s\").\n"
         . "The PSR-7 bridge is documented code: update this check alongside it.\n",
+        basename($file),
         $describes,
         $needle
     ));
@@ -43,12 +51,15 @@ function readmeBlock(array $blocks, string $needle, string $describes): string
     exit(1);
 }
 
+$page = $root . '/docs/psr7.md';
+$readme = $root . '/README.md';
+
 /* Needles are the distinctive line of each block, not a word that could appear in another:
-   `unlink` alone matches the rollback example in the multi-file section */
-$bridge = readmeBlock($blocks, 'function fileListFrom', 'PSR-7 bridge');
-$fileInfo = readmeBlock($blocks, 'class TmpUploadFile', 'isUploadedFile() override');
-$flatten = readmeBlock($blocks, 'RecursiveArrayIterator', 'flattening');
-$cleanup = readmeBlock($blocks, 'foreach ($list as $file)', 'tmp-file cleanup');
+   `unlink` alone matches the rollback example in the README's multi-file section */
+$bridge = documentedBlock($page, 'function fileListFrom', 'PSR-7 bridge');
+$flatten = documentedBlock($page, 'RecursiveArrayIterator', 'flattening');
+$fileInfo = documentedBlock($readme, 'class TmpUploadFile', 'isUploadedFile() override');
+$cleanup = documentedBlock($readme, 'foreach ($list as $file)', 'tmp-file cleanup');
 
 eval($bridge . "\n" . str_replace("'/var/lib/myapp/uploads-tmp'", var_export($tmpDirectory, true), $fileInfo));
 
@@ -168,13 +179,189 @@ foreach ($factories as $implementation => $factory) {
     }
 }
 
+/* A conforming stream that never makes progress and never reports eof. psr/http-message is
+   pinned to 2.0, so these signatures are the same on every PHP this runs under. Anonymous,
+   because a named class here would need a namespace this script does not have. */
+$stalling = new class implements Psr\Http\Message\StreamInterface {
+    /** @var int */
+    public $reads = 0;
+
+    public function read(int $length): string
+    {
+        $this->reads++;
+
+        /* A bridge that guards this gives up after two empty reads. Throwing rather than
+           spinning means a regression fails the check instead of hanging the job. */
+        if ($this->reads > 100) {
+            throw new RuntimeException('writeTmpFile() kept reading a stream that never ends');
+        }
+
+        return '';
+    }
+
+    public function eof(): bool
+    {
+        return false;
+    }
+
+    public function __toString(): string
+    {
+        return '';
+    }
+
+    public function close(): void
+    {
+    }
+
+    public function detach()
+    {
+        return null;
+    }
+
+    public function getSize(): ?int
+    {
+        return null;
+    }
+
+    public function tell(): int
+    {
+        return 0;
+    }
+
+    public function isSeekable(): bool
+    {
+        return false;
+    }
+
+    public function seek(int $offset, int $whence = SEEK_SET): void
+    {
+    }
+
+    public function rewind(): void
+    {
+    }
+
+    public function isWritable(): bool
+    {
+        return false;
+    }
+
+    public function write(string $string): int
+    {
+        return 0;
+    }
+
+    public function isReadable(): bool
+    {
+        return true;
+    }
+
+    public function getContents(): string
+    {
+        return '';
+    }
+
+    public function getMetadata(?string $key = null)
+    {
+        return null;
+    }
+};
+
+/* Each of these fails against a bridge that dereferences whatever the array holds, reports
+   every failure as INI_SIZE, or loops until read() makes progress. One scenario per try, so a
+   throw in the first does not mask the rest. */
+$png = (string) file_get_contents(__DIR__ . '/../../tests/Upload/assets/foo.png');
+$factory = new Nyholm\Psr7\Factory\Psr17Factory();
+
+/* The loop above removed both directories on its way out */
+@mkdir($tmpDirectory, 0755, true);
+
+$storage = new GravityPdf\Upload\Storage\FileSystem($tmpDirectory);
+$uploaded = $factory->createUploadedFile(
+    $factory->createStream($png),
+    strlen($png),
+    UPLOAD_ERR_OK,
+    'a.png',
+    'image/png'
+);
+
+$scenario = static function (string $what, callable $run) use (&$failures): void {
+    try {
+        $run();
+    } catch (\Throwable $e) {
+        $failures[] = sprintf(
+            "%s: the documented bridge threw\n  %s: %s\n  at %s:%d",
+            $what,
+            get_class($e),
+            $e->getMessage(),
+            $e->getFile(),
+            $e->getLine()
+        );
+    }
+};
+
+$scenario('a nested field', static function () use ($check, $storage, $uploaded): void {
+    /* getUploadedFiles() nests as deeply as the client's field names do */
+    $nested = fileListFrom(['n' => ['deeper' => $uploaded]], $storage, 1 << 20);
+
+    $check('a nested field is reported rather than fatal', 0, count($nested));
+    $check(
+        'and named as unreadable',
+        ['unnamed-file: No file was uploaded'],
+        array_values($nested->getErrors())
+    );
+});
+
+$scenario('a missing tmp directory', static function () use ($check, $storage, $uploaded, $tmpDirectory): void {
+    /* A tmp directory that is not there has nothing to do with how large the file is, and
+       an unsilenced fopen() puts the absolute path in the log on every request */
+    rename($tmpDirectory, $tmpDirectory . '-moved');
+    set_error_handler(static function (int $severity, string $message): bool {
+        /* A handler is called even for a diagnostic the @ operator suppressed, so honour it
+           here: the bridge silences its own fopen() deliberately. */
+        if ((error_reporting() & $severity) === 0) {
+            return true;
+        }
+
+        throw new RuntimeException($message);
+    });
+
+    try {
+        $noDirectory = fileListFrom(['a' => $uploaded], $storage, 1 << 20);
+    } finally {
+        restore_error_handler();
+        rename($tmpDirectory . '-moved', $tmpDirectory);
+    }
+
+    $check(
+        'a server-side failure is not reported as an oversized upload',
+        ['cant_write'],
+        array_column($noDirectory->getErrorDetails(), 'code')
+    );
+});
+
+$scenario('a stalled stream', static function () use ($check, $tmpDirectory, $stalling): void {
+    $stalledPath = $tmpDirectory . '/stalled';
+
+    $check(
+        'a stream that never finishes gives up',
+        UPLOAD_ERR_PARTIAL,
+        writeTmpFile($stalling, $stalledPath, 1 << 20)
+    );
+    $check('after two reads, not indefinitely', 2, $stalling->reads);
+    $check('and leaves nothing behind', false, file_exists($stalledPath));
+});
+
+$empty($tmpDirectory);
+@rmdir($tmpDirectory);
+
 if ($failures !== []) {
     fwrite(
         STDERR,
-        "The README's PSR-7 bridge no longer behaves as documented:\n\n" . implode("\n\n", $failures) . "\n"
+        "The PSR-7 bridge no longer behaves as documented:\n\n" . implode("\n\n", $failures) . "\n"
     );
 
     exit(1);
 }
 
-echo "README PSR-7 bridge verified against nyholm/psr7 and guzzlehttp/psr7\n";
+echo "docs/psr7.md verified against nyholm/psr7 and guzzlehttp/psr7\n";
