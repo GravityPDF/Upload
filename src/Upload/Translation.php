@@ -72,6 +72,34 @@ final class Translation
     private static $translator;
 
     /**
+     * Mark a string for the catalogue without translating it
+     *
+     * gettext's `N_()` under a more familiar name: it returns `$text` unchanged. `File` does
+     * the lookup later, when it renders `getErrors()`. That is what keeps
+     * `Exception::getMessage()` in English and the raw msgid in `getErrorDetails()`.
+     *
+     * A static method rather than a function so that a classmap autoloader reaches it. The
+     * `files` autoload entry a function needs is Composer's alone, and an autoloader built
+     * over a php-scoper'd tree does not run it — leaving every error path in the library a
+     * fatal on a site where uploads had only ever succeeded.
+     *
+     * **Not WordPress's `__()`.** Unqualified, `Translation` resolves in the calling file's
+     * own namespace and nowhere else, so a missing import is a fatal at the call rather than
+     * a silent hop to whatever global `__()` is loaded.
+     *
+     * `$domain` is discarded — the lookup always uses `self::DOMAIN` — and is there for your
+     * extractor. `xgettext -k__:1` reads the first argument of `Translation::__()` exactly as
+     * it reads a bare `__()`; `-k__:1,2` finds nothing.
+     *
+     * @param string $text   The English string, which is also the gettext msgid
+     * @param string $domain The catalogue the string belongs to, for tooling that reads these
+     */
+    public static function __(string $text, string $domain = self::DOMAIN): string
+    {
+        return $text;
+    }
+
+    /**
      * Install the callable that looks a message id up
      *
      * Process-wide. It is called when a message is rendered, not when it is installed, so a

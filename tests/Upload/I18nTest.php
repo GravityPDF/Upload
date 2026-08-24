@@ -4,8 +4,6 @@ namespace GravityPdf\Upload;
 
 use Yoast\PHPUnitPolyfills\TestCases\TestCase;
 
-use function GravityPdf\Upload\__;
-
 class I18nTest extends TestCase
 {
     /* phpcs:ignore */
@@ -18,7 +16,7 @@ class I18nTest extends TestCase
 
     public function testTheMarkerReturnsItsArgument(): void
     {
-        $this->assertSame('No file was uploaded', __('No file was uploaded'));
+        $this->assertSame('No file was uploaded', Translation::__('No file was uploaded'));
     }
 
     /**
@@ -27,8 +25,14 @@ class I18nTest extends TestCase
      */
     public function testTheDomainChangesNothingAboutTheAnswer(): void
     {
-        $this->assertSame('No file was uploaded', __('No file was uploaded', Translation::DOMAIN));
-        $this->assertSame('No file was uploaded', __('No file was uploaded', 'someone-elses-plugin'));
+        $this->assertSame(
+            'No file was uploaded',
+            Translation::__('No file was uploaded', Translation::DOMAIN)
+        );
+        $this->assertSame(
+            'No file was uploaded',
+            Translation::__('No file was uploaded', 'someone-elses-plugin')
+        );
     }
 
     /**
@@ -41,13 +45,14 @@ class I18nTest extends TestCase
             return 'traduit';
         });
 
-        $this->assertSame('No file was uploaded', __('No file was uploaded'));
+        $this->assertSame('No file was uploaded', Translation::__('No file was uploaded'));
     }
 
     /**
-     * A file that forgets the import calls the global `__()` instead. Under PHPUnit there is
-     * none, so that is a fatal; under WordPress there is one, and the string is translated far
-     * too early with nothing to report it.
+     * A file that forgets `use GravityPdf\Upload\Translation;` fatals at the call — a class
+     * name never falls back to the global namespace the way a function name does. That is
+     * still only reached on an error path, so the import is checked here rather than left to
+     * the first rejected upload.
      *
      * One test over the whole corpus, not one per file. Per-file it could only assert about a
      * file that marks something, so renaming the marker made every case vacuous while the
@@ -60,31 +65,43 @@ class I18nTest extends TestCase
         foreach ($this->sourceFiles() as $file) {
             $source = (string) file_get_contents($file);
 
-            if (preg_match('/(?<![\w\\\\])__\s*\(/', $source) !== 1) {
+            if (strpos($source, 'Translation::__(') === false) {
                 continue;
             }
 
             $reachable[basename($file)] = strpos($source, 'namespace GravityPdf\Upload;') !== false
-                || strpos($source, 'use function GravityPdf\Upload\__;') !== false;
+                || strpos($source, 'use GravityPdf\Upload\Translation;') !== false;
         }
 
         $this->assertNotSame([], $reachable, 'Nothing under src/ marks a string — has the marker been renamed?');
         $this->assertSame(
             array_fill_keys(array_keys($reachable), true),
             $reachable,
-            'A file calls __() but neither sits in GravityPdf\Upload nor imports it'
+            'A file calls Translation::__() but neither sits in GravityPdf\Upload nor imports the class'
         );
     }
 
     /**
-     * That fatal only exists while nothing defines a global `__()`. A WordPress stub in
-     * `tests/bootstrap.php` would swallow it, leaving the source scan as the only guard.
+     * The marker is a static method rather than a function so that an autoloader which only
+     * indexes classes still reaches it. Composer's `files` entry is the only thing that loads
+     * a bare function, and an autoloader built over a php-scoper'd tree does not run it.
      */
-    public function testNoGlobalMarkerCanMaskAMissingImport(): void
+    public function testTheMarkerTravelsWithTheClass(): void
     {
+        $this->assertFileDoesNotExist(dirname(__DIR__, 2) . '/src/Upload/i18n.php');
         $this->assertFalse(
-            function_exists('__'),
-            'A global __() would let a file that forgets the import pass its tests'
+            function_exists('GravityPdf\\Upload\\__'),
+            'A bare marker function would shadow the global __() a WordPress or Laravel '
+            . 'translator calls, in any file that imported it'
+        );
+
+        $composer = json_decode((string) file_get_contents(dirname(__DIR__, 2) . '/composer.json'), true);
+
+        $this->assertIsArray($composer);
+        $this->assertArrayNotHasKey(
+            'files',
+            $composer['autoload'],
+            'A `files` autoload entry is unreachable from a classmap over a scoped tree'
         );
     }
 

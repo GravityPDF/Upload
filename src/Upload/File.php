@@ -164,7 +164,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
             || array_key_exists('error', $_FILES[$key]) === false
         ) {
             $this->recordError(
-                __('An uploaded file was sent in a format that cannot be read'),
+                Translation::__('An uploaded file was sent in a format that cannot be read'),
                 [],
                 ErrorCode::MALFORMED_UPLOAD
             );
@@ -186,7 +186,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                    the other two keys, which a ragged or mistyped entry leaves short. */
                 if (is_string($tmpName) === false || is_string($name) === false || is_int($errorCode) === false) {
                     $this->recordError(
-                        __('An uploaded file was sent in a format that cannot be read'),
+                        Translation::__('An uploaded file was sent in a format that cannot be read'),
                         [],
                         ErrorCode::MALFORMED_UPLOAD
                     );
@@ -209,7 +209,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                TypeError out of createFromFactory(). The code is checked too because `(int) [0]`
                is 1, which reported the file as exceeding `upload_max_filesize`. */
             $this->recordError(
-                __('An uploaded file was sent in a format that cannot be read'),
+                Translation::__('An uploaded file was sent in a format that cannot be read'),
                 [],
                 ErrorCode::MALFORMED_UPLOAD
             );
@@ -309,9 +309,9 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      * A method rather than the property this was before 4.0.0, for the reason
      * `FileSystem::getDefaultBlockedExtensions()` is one: a PHP 7.3 constant expression
      * cannot call a function, so an array of literals is all a property could hold and an
-     * extractor cannot see one. `__()` marks each without translating it; the lookup happens
-     * where the message is rendered. Still `static::`, so a subclass replacing the wording
-     * keeps working — its strings are its own to extract.
+     * extractor cannot see one. `Translation::__()` marks each without translating it; the
+     * lookup happens where the message is rendered. Still `static::`, so a subclass replacing
+     * the wording keeps working — its strings are its own to extract.
      *
      * @return array<int,string> Keyed by `UPLOAD_ERR_*`
      */
@@ -319,16 +319,16 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     {
         return [
             UPLOAD_ERR_INI_SIZE =>
-                __('The uploaded file exceeds the upload_max_filesize directive in php.ini'),
+                Translation::__('The uploaded file exceeds the upload_max_filesize directive in php.ini'),
             UPLOAD_ERR_FORM_SIZE =>
-                __(
+                Translation::__(
                     'The uploaded file exceeds the MAX_FILE_SIZE directive that was specified in the HTML form'
                 ),
-            UPLOAD_ERR_PARTIAL => __('The uploaded file was only partially uploaded'),
-            UPLOAD_ERR_NO_FILE => __('No file was uploaded'),
-            UPLOAD_ERR_NO_TMP_DIR => __('The server is missing its temporary upload folder'),
-            UPLOAD_ERR_CANT_WRITE => __('The server could not write the file to disk'),
-            UPLOAD_ERR_EXTENSION => __('A PHP extension stopped the file upload'),
+            UPLOAD_ERR_PARTIAL => Translation::__('The uploaded file was only partially uploaded'),
+            UPLOAD_ERR_NO_FILE => Translation::__('No file was uploaded'),
+            UPLOAD_ERR_NO_TMP_DIR => Translation::__('The server is missing its temporary upload folder'),
+            UPLOAD_ERR_CANT_WRITE => Translation::__('The server could not write the file to disk'),
+            UPLOAD_ERR_EXTENSION => Translation::__('A PHP extension stopped the file upload'),
         ];
     }
 
@@ -337,7 +337,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      */
     protected static function uploadFailureMessageId(int $errorCode): string
     {
-        return static::getUploadErrorMessages()[$errorCode] ?? __('Unknown error');
+        return static::getUploadErrorMessages()[$errorCode] ?? Translation::__('Unknown error');
     }
 
     /**
@@ -542,7 +542,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      * way in since `$errorDetails` became `private` in 4.0.0.
      *
      * @param string $messageId The English message, or a message id whose `%1$s` placeholders
-     *                          `$args` fills. Marked with `__()` at the call site, not
+     *                          `$args` fills. Marked with `Translation::__()` at the call site, not
      *                          translated here: `getErrorDetails()` renders it, so the locale
      *                          in force when the message is read is the one used
      * @param array<array-key,string|int|float> $args Values for the message's placeholders
@@ -862,7 +862,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                them. Skipping the after-hook leaks on exactly the files that failed. */
             if ($fileInfo->isUploadedFile() === false) {
                 $this->recordError(
-                    __('This file was not received as an upload'),
+                    Translation::__('This file was not received as an upload'),
                     [],
                     ErrorCode::NOT_AN_UPLOADED_FILE,
                     $this->getSanitizedFilename($fileInfo)
@@ -907,7 +907,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                            shown to end users. Rethrow an Upload\Exception to surface either. */
                         $sanitizedFilename = $sanitizedFilename ?? $this->getSanitizedFilename($fileInfo);
                         $this->recordError(
-                            __('Validation could not be completed'),
+                            Translation::__('Validation could not be completed'),
                             [],
                             ErrorCode::VALIDATION_INCOMPLETE,
                             $sanitizedFilename

@@ -37,10 +37,9 @@ use GravityPdf\Upload\ErrorCode;
 use GravityPdf\Upload\Exception;
 use GravityPdf\Upload\File;
 use GravityPdf\Upload\FileInfoInterface;
+use GravityPdf\Upload\Translation;
 use GravityPdf\Upload\ValidationInterface;
 use InvalidArgumentException;
-
-use function GravityPdf\Upload\__;
 
 /**
  * Validate Upload File Size
@@ -141,7 +140,11 @@ class Size implements ValidationInterface
            would absorb that as the generic "Validation could not be completed"; this reports
            what actually went wrong with the file. */
         if ($fileSize === false) {
-            throw new Exception(__('File size could not be determined'), $fileInfo, ErrorCode::SIZE_UNKNOWN);
+            throw new Exception(
+                Translation::__('File size could not be determined'),
+                $fileInfo,
+                ErrorCode::SIZE_UNKNOWN
+            );
         }
 
         if ($fileSize < $this->minSize) {
@@ -175,7 +178,7 @@ class Size implements ValidationInterface
      * The unit is part of the message rather than a value interpolated into it, because
      * values are never translated and `MB` is not universal — French writes `Mo`.
      *
-     * A method, not a property, because a PHP 7.3 constant expression cannot call `__()`.
+     * A method, not a property: a PHP 7.3 constant expression cannot call `Translation::__()`.
      * Override it to reword; your replacements are then yours to extract.
      *
      * @return array<string,string> Keyed by the unit keys `scale()` returns
@@ -185,16 +188,16 @@ class Size implements ValidationInterface
         return [
             'GB' =>
                 /* translators: %1$s: the largest accepted size, in gigabytes */
-                __('File size is too large. Must be no more than %1$s GB'),
+                Translation::__('File size is too large. Must be no more than %1$s GB'),
             'MB' =>
                 /* translators: %1$s: the largest accepted size, in megabytes */
-                __('File size is too large. Must be no more than %1$s MB'),
+                Translation::__('File size is too large. Must be no more than %1$s MB'),
             'KB' =>
                 /* translators: %1$s: the largest accepted size, in kilobytes */
-                __('File size is too large. Must be no more than %1$s KB'),
+                Translation::__('File size is too large. Must be no more than %1$s KB'),
             'B' =>
                 /* translators: %1$s: the largest accepted size, in bytes */
-                __('File size is too large. Must be no more than %1$s bytes'),
+                Translation::__('File size is too large. Must be no more than %1$s bytes'),
         ];
     }
 
@@ -210,16 +213,16 @@ class Size implements ValidationInterface
         return [
             'GB' =>
                 /* translators: %1$s: the smallest accepted size, in gigabytes */
-                __('File size is too small. Must be at least %1$s GB'),
+                Translation::__('File size is too small. Must be at least %1$s GB'),
             'MB' =>
                 /* translators: %1$s: the smallest accepted size, in megabytes */
-                __('File size is too small. Must be at least %1$s MB'),
+                Translation::__('File size is too small. Must be at least %1$s MB'),
             'KB' =>
                 /* translators: %1$s: the smallest accepted size, in kilobytes */
-                __('File size is too small. Must be at least %1$s KB'),
+                Translation::__('File size is too small. Must be at least %1$s KB'),
             'B' =>
                 /* translators: %1$s: the smallest accepted size, in bytes */
-                __('File size is too small. Must be at least %1$s bytes'),
+                Translation::__('File size is too small. Must be at least %1$s bytes'),
         ];
     }
 

@@ -8,7 +8,7 @@
  *
  * ## What is in the catalogue, and what is deliberately not
  *
- * Whatever is marked with `GravityPdf\Upload\__()`, which is exactly what `File` looks up.
+ * Whatever is marked with `Translation::__()`, which is exactly what `File` looks up.
  * That is narrower than "every string in `src/`", and the narrowing is the marker's doing
  * rather than this script's:
  *
@@ -22,8 +22,9 @@
  *
  * One flag against a marker that does nothing but return its argument, so a PHP-based scanner
  * would do no better here and `tools/i18n/` needs no manifest of its own. A consumer
- * generating their own catalogue from `vendor/` runs the same flag. It matches the fully
- * qualified `\GravityPdf\Upload\__()` as well as the imported short form.
+ * generating their own catalogue from `vendor/` runs the same flag. `xgettext` matches the
+ * trailing identifier and ignores the class prefix, so `-k__:1` reads `Translation::__()`,
+ * `\GravityPdf\Upload\Translation::__()` and an aliased `T::__()` alike.
  *
  * `-k__:1` reads the first argument and ignores the marker's `$domain`. Do not "complete" it
  * to `-k__:1,2`: gettext reads a second argument number as the plural form, no call in `src`

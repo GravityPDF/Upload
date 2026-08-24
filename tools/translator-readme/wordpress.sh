@@ -2,10 +2,9 @@
 #
 # Runs the WordPress page's documented pipeline against a real plugin tree.
 #
-# The runtime half needs WordPress and is covered in PHP by verify.php, which pins the part
-# that actually goes wrong: `\__()` reaching the global rather than this library's marker.
-# This is the extraction half, which needs wp-cli but no WordPress install — `make-pot` runs
-# on the before_wp_load hook.
+# The runtime half needs WordPress and is covered in PHP by verify.php. This is the extraction
+# half, which needs wp-cli but no WordPress install — `make-pot` runs on the before_wp_load
+# hook.
 #
 # The plugin is built from `git archive`, so what it holds is what a consumer's `vendor/`
 # holds. A file that stops shipping fails here rather than in their tree.

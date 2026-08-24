@@ -19,11 +19,6 @@ Translation::setTranslator(static function (string $text): string {
 `__()` lives in `illuminate/foundation`. Using the Translator standalone, call
 `$translator->get($text)` instead.
 
-**Note the leading backslash.** If this file also uses this library's `__()` marker for a
-validation of your own, it will have imported it, and an unqualified `__($text)` calls the
-marker instead. The marker returns its argument, so your translator would silently do nothing
-and every message would stay English. `\__()` is always Laravel's.
-
 ## Produce the catalogue
 
 `lang/de.json` takes the msgids as keys:

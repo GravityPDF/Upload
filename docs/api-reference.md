@@ -181,13 +181,16 @@ string, and they reach `getErrorDetails()` intact.
 | `Translation::interpolate(string $template, array $args = []): string` | The interpolation without the lookup, falling back to the template when the values do not fit. What `Exception` composes its English message with. |
 | `Translation::DOMAIN` | `'gravitypdf-upload'`. Fixed: WordPress forbids a variable text domain, and no extractor can follow one. |
 
-`GravityPdf\Upload\__(string $text, string $domain = Translation::DOMAIN): string` is the
-marker — a function, not a method. It is gettext's `N_()` idiom: it returns `$text`, so an
-extractor records the msgid while the lookup happens elsewhere. It is not WordPress's `__()`,
-and the two coexist. The domain is discarded, and is optional as it is on WordPress's `__()`;
-the calls in `src` omit it. Outside the library's own namespace, import it with
-`use function GravityPdf\Upload\__;` or call it fully qualified; an unqualified call with
-neither falls back to the global `__()`.
+`Translation::__(string $text, string $domain = Translation::DOMAIN): string` is the marker.
+It is gettext's `N_()` idiom: it returns `$text`, so an extractor records the msgid while the
+lookup happens elsewhere. It is not WordPress's `__()`, and the two coexist. The domain is
+discarded, and is optional as it is on WordPress's `__()`; the calls in `src` omit it.
+
+A static method rather than a function so that it travels with the class. A function needs
+Composer's `files` autoload entry, and an autoloader that only indexes classes — a classmap
+built over a php-scoper'd tree, which is how a WordPress plugin usually consumes this library
+— never runs it, leaving every error path a fatal on a site where uploads had only ever
+succeeded.
 
 ## ErrorCode
 

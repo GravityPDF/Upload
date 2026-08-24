@@ -267,10 +267,6 @@ The English string is the message id, so there is nothing to map, and a lookup t
 nothing returns what the library would have said anyway. Seed a catalogue from
 `i18n/upload.pot`; no `.po` or `.mo` files ship.
 
-The leading backslash matters if this file also uses the library's `__()` marker for a
-validation of your own. Without it the call reaches the marker, which returns its argument, and
-your translator silently does nothing.
-
 In WordPress, merge the catalogue into yours when you extract — `wp i18n make-pot` never looks
 inside `vendor/`:
 
