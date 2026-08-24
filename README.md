@@ -431,6 +431,7 @@ placeholders do not match throws `ArgumentCountError` — on the failure path, o
 `Translation::render()` handles this and falls back to English.
 
 `Exception::getErrorCode()` returns the same codes, including for storage failures.
+
 ## Security notes
 
 **Prefer `FileType` over `Mimetype` and `Extension` separately.** Those two check independent
@@ -526,7 +527,7 @@ it throws. The entry points:
 | [`File`](docs/api-reference.md#file) | Reads `$_FILES[$key]` into a collection: validations, callbacks, `upload()` and `uploadValid()`. |
 | [`FileList`](docs/api-reference.md#filelist) | The same collection, built from files you supply. |
 | [`FileInfo`](docs/api-reference.md#fileinfo) | The per-file value object — name, extension, sniffed media type, size, hash, dimensions. |
-| [`Storage\FileSystem`](docs/api-reference.md#storagefilesystem) | The shipped backend: where a file lands, and the five protections it applies on the way. |
+| [`Storage\FileSystem`](docs/api-reference.md#storagefilesystem) | The shipped backend: where a file lands, and the four protections it applies on the way. |
 | [Validations](docs/api-reference.md#validations) | `FileType` and `Size`, plus the two classes deprecated in 4.0. |
 | [`Filename`](docs/api-reference.md#filename) | The filename rules both layers read, and the predicates for reproducing them. |
 | [`Exception`](docs/api-reference.md#exception), [`ErrorCode`](docs/api-reference.md#errorcode) | What a failure carries, and the stable code to branch on. |

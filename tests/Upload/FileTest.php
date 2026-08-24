@@ -185,6 +185,45 @@ class FileTest extends TestCase
         $this->assertSame('file-2.doc', $file[1]->getNameWithExtension()); /* @phpstan-ignore-line */
     }
 
+    /**
+     * PHP passes `offsetSet()` a null offset for `$file[] = $fileInfo`. Assigned straight
+     * through it becomes the string key `''`, so the second append overwrote the first and a
+     * key the `ArrayAccess<int, FileInfoInterface>` annotation does not admit reached
+     * `getUploadedLocators()`, which `store()` keys by collection offset.
+     *
+     * Two appends, because one is indistinguishable from a working append: the file is there
+     * either way and only the key is wrong.
+     */
+    public function testAppendingTwiceKeepsBothFiles(): void
+    {
+        $file = new File('single', $this->storage);
+
+        $file[] = new FileInfo($this->assetsDirectory . '/foo.txt', 'foo.txt');
+        $file[] = new FileInfo($this->assetsDirectory . '/bar.txt', 'bar.txt');
+
+        $this->assertCount(3, $file);
+        $this->assertSame([0, 1, 2], array_keys(iterator_to_array($file)));
+        $this->assertSame(
+            ['single.txt', 'foo.txt', 'bar.txt'],
+            $file->getNameWithExtension()
+        );
+    }
+
+    /**
+     * The offsets an append produces are what `getUploadedLocators()` is keyed by, and the
+     * README tells a caller to read `$file[$offset]` against them.
+     */
+    public function testAnAppendedFileGetsAnIntegerLocatorOffset(): void
+    {
+        $file = new File('single', $this->storage);
+        $file[] = new VouchedFileInfo($this->assetsDirectory . '/foo.txt', 'foo.txt');
+        $file->allowUnvalidatedUploads();
+
+        $file->upload();
+
+        $this->assertSame([0, 1], array_keys($file->getUploadedLocators()));
+    }
+
     public function testConstructionWithSingleFile(): void
     {
         $file = new File('single', $this->storage);

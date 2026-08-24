@@ -3,6 +3,7 @@
 namespace GravityPdf\Upload\Storage;
 
 use InvalidArgumentException;
+use GravityPdf\Upload\Filename;
 use GravityPdf\Upload\Exception;
 use GravityPdf\Upload\FileInfo;
 use GravityPdf\Upload\FileInfoInterface;
@@ -179,9 +180,35 @@ class FileSystemTest extends TestCase
             'device before further dots' => ['CON.tar.gz'],
             'numbered device' => ['COM0.log'],
             'superscript device' => ["LPT\u{00B9}.log"],
+
+            /* `FileInfo` truncates to `Filename::MAX_LENGTH`; only an implementation of your
+               own arrives over it. Without this refusal the name reached the exclusive create
+               and failed on the file system's own ENAMETOOLONG, reported as
+               'Destination file could not be created' — the code that means the directory
+               went away, which sends a caller down a retry that cannot succeed. */
+            'longer than MAX_LENGTH' => [str_repeat('a', 252) . '.txt'],
         ];
     }
 
+    /**
+     * The budget is name and extension together, so the boundary is the whole filename rather
+     * than either half. Pinned in both directions: a rule that refused everything would pass
+     * the test above just as well.
+     */
+    public function testAcceptsANameOfExactlyMaxLength(): void
+    {
+        $workingDirectory = $this->makeWorkingDirectory();
+        $filename = str_repeat('a', Filename::MAX_LENGTH - 4) . '.txt';
+
+        $this->assertSame(Filename::MAX_LENGTH, strlen($filename));
+
+        $storage = $this->makeStorage($workingDirectory, true);
+        $storage->upload($this->makeHostileFileInfo($filename));
+
+        $this->assertFileExists($workingDirectory . '/' . $filename);
+    }
+
+    /** @group posix */
     public function testRefusesToWriteThroughASymlink(): void
     {
         $workingDirectory = $this->makeWorkingDirectory();
@@ -206,6 +233,8 @@ class FileSystemTest extends TestCase
      * different routes to the write and only one of them reserves the name first.
      *
      * @dataProvider providerOverwriteSettings
+     *
+     * @group posix
      */
     public function testWillNotWriteThroughASymlinkOntoAnExistingFile(bool $overwrite): void
     {
@@ -249,6 +278,8 @@ class FileSystemTest extends TestCase
     /**
      * `x` mode resolves the path through PHP's stream layer, so it follows a dangling symlink
      * and creates the target. The inode comparison is what catches that.
+     *
+     * @group posix
      */
     public function testExclusiveCreateDetectsDanglingSymlink(): void
     {
@@ -293,6 +324,8 @@ class FileSystemTest extends TestCase
      * can change in between. What keeps the upload out of a symlinked target is that the bytes
      * go to a staged name and are `rename()`d on, which replaces the entry rather than
      * resolving it. The stub stands in for an attacker winning that race.
+     *
+     * @group posix
      */
     public function testSymlinkPlantedDuringTheWriteIsReplacedNotFollowed(): void
     {
@@ -796,6 +829,7 @@ class FileSystemTest extends TestCase
         );
     }
 
+    /** @group posix */
     public function testSetModeAppliesPermissions(): void
     {
         $workingDirectory = $this->makeWorkingDirectory();
@@ -806,6 +840,7 @@ class FileSystemTest extends TestCase
         $this->assertSame('0600', $this->modeOf($workingDirectory . '/private.txt'));
     }
 
+    /** @group posix */
     public function testDefaultModeIsAppliedWithoutBeingAskedFor(): void
     {
         $workingDirectory = $this->makeWorkingDirectory();
@@ -819,6 +854,8 @@ class FileSystemTest extends TestCase
     /**
      * `setMode(null)` hands the mode back to the process umask, which is what
      * `move_uploaded_file()` does on its own.
+     *
+     * @group posix
      */
     public function testModeCanBeHandedBackToTheUmask(): void
     {
@@ -874,6 +911,7 @@ class FileSystemTest extends TestCase
     }
 
     /** The opt-out, and the whole of it: everything else about the write is unchanged */
+    /** @group posix */
     public function testStoresAFileNotUploadedByPhpOnceTheCallerAllowsIt(): void
     {
         $workingDirectory = $this->makeWorkingDirectory();
@@ -897,6 +935,8 @@ class FileSystemTest extends TestCase
     /**
      * The opt-in authorises a source the SAPI did not write. It does not authorise anything
      * about the destination, so the refusals that make the write safe still hold.
+     *
+     * @group posix
      */
     public function testAFileNotUploadedByPhpStillCannotBeWrittenThroughASymlink(): void
     {
@@ -945,6 +985,8 @@ class FileSystemTest extends TestCase
      * Linux, which covers CI; set `UPLOAD_TEST_OTHER_FS` to a writable directory on another
      * mount to run it anywhere else (macOS: `hdiutil attach -nomount ram://8192` then
      * `diskutil erasevolume HFS+ UPLOADTMP <disk>`).
+     *
+     * @group posix
      */
     public function testStoresAFileFromAnotherFileSystem(): void
     {
@@ -1010,6 +1052,8 @@ class FileSystemTest extends TestCase
      * stream wrapper, which is what is left once its plain-files EXDEV handling is accounted
      * for (see the test above). Also the other half of that branch — a source the move cannot
      * unlink afterwards must not fail an upload whose bytes are already at the destination.
+     *
+     * @group posix
      */
     public function testCopiesTheFileWhenItCannotBeRenamedAcrossFileSystems(): void
     {
@@ -1254,6 +1298,8 @@ class FileSystemTest extends TestCase
      * Driven through `reserveDestination()` rather than `upload()`, because `upload()`'s own
      * `is_link()` check rejects a link that is already in place. Reaching here means the link
      * was planted after it, which is a race a test cannot stage.
+     *
+     * @group posix
      */
     public function testReservationThroughASymlinkLeavesNothingAtItsTarget(): void
     {
@@ -1370,6 +1416,8 @@ class FileSystemTest extends TestCase
     /**
      * The placeholder holds the final name for the whole transfer, so it must not sit there at
      * whatever the umask allowed.
+     *
+     * @group posix
      */
     public function testTheReservationPlaceholderCarriesTheConfiguredMode(): void
     {

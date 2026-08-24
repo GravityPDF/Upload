@@ -92,6 +92,7 @@ otherwise blank the message.
 
 Each page carries a working adapter, the commands to build the catalogue, and what to watch
 for. They are checked against the real libraries by `composer translator-readme`.
+
 ## Stating a size in a locale
 
 `Validation\Size` writes `4.7 MB` with a `.`, because picking another separator needs a locale

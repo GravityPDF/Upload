@@ -166,7 +166,7 @@ class FileList extends File
      * than reassigned: a file the caller put here directly has no key of their own for this
      * class to report.
      *
-     * @param int $offset
+     * @param int|null $offset Null for `$list[] = $fileInfo`, which appends
      * @param mixed $value A FileInfoInterface; the type is checked at runtime, not declared
      * @throws InvalidArgumentException If the value is not a `FileInfoInterface`
      */
@@ -174,7 +174,15 @@ class FileList extends File
     {
         parent::offsetSet($offset, $value);
 
-        unset($this->sourceKeys[$offset]);
+        /* An append has no offset of the caller's to drop, so read back the one it landed at
+           rather than assuming which that is: `unset($this->sourceKeys[null])` reaches the key
+           `''` and leaves the real entry in place. The parent has just written, so the array
+           cannot be empty — the null check is for the analyser. */
+        $written = $offset ?? array_key_last($this->objects);
+
+        if ($written !== null) {
+            unset($this->sourceKeys[$written]);
+        }
     }
 
     /** @param int $offset */

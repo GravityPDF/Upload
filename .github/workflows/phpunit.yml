@@ -83,6 +83,45 @@ jobs:
           files: tmp/coverage/report-xml/php-coverage1.xml
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  # Reserved device names, `:` naming an NTFS alternate data stream, trailing dots and spaces
+  # resolving away, `DIRECTORY_SEPARATOR`, and the note that `reserveDestination()`'s inode
+  # comparison degrades where `stat()` reports `ino` as 0 — all of it is Windows behaviour this
+  # library reasons about carefully and had never executed on Windows.
+  #
+  # `@group posix` marks what genuinely cannot run there: `symlink()` needs a privilege an
+  # uploading process should not hold, `chmod()` is close to a no-op, and `umask()` means
+  # nothing. Excluded by group rather than skipped, so `cross-file-system` keeps the single
+  # `markTestSkipped()` its `--fail-on-skipped` guard depends on.
+  #
+  # `continue-on-error` until this has been green once: nothing in the project has ever run on
+  # Windows, so the first runs are discovery rather than a gate. Remove it, and this comment,
+  # once the job passes — a red job nobody may merge past is the point of adding it.
+  windows:
+    name: ${{ matrix.php }} on windows-latest
+    runs-on: windows-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        # The ends of the supported range. The middle versions differ from these in nothing
+        # this job exercises, and a Windows runner costs several times a Linux one.
+        php: [ '7.3', '8.5' ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.0
+
+      - name: Install PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.35.5
+        with:
+          php-version: ${{ matrix.php }}
+
+      - name: Install Composer dependencies
+        run: composer install --no-scripts
+
+      - name: Run the test suite
+        run: vendor/bin/phpunit --exclude-group posix
+
   # `ext-mbstring` is `suggest`, not `require`, and every job above runs with it loaded, so an
   # unguarded `mb_*` call fatals on a supported install without any of them noticing.
   #
