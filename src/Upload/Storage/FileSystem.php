@@ -523,12 +523,26 @@ class FileSystem implements StorageInterface
      */
     private function releaseReservation(string $destinationFile, $opened): void
     {
-        $target = @readlink($destinationFile);
+        /* `is_link()` rather than a failed `readlink()`, which is not the same question on
+           every platform: PHP's Windows `readlink()` answers a *regular file* with its own
+           canonical path instead of failing, so the placeholder took the link branch below,
+           matched nothing there and was never removed — leaving the caller's name held
+           against every later upload. The stat cache is cleared because `reserveDestination()`
+           has already lstat'd this path. */
+        clearstatcache(true, $destinationFile);
 
-        if ($target === false) {
+        if (!is_link($destinationFile)) {
             /* Not a link, so the name is the file. `unlink()` does not follow one in any case. */
             @unlink($destinationFile);
 
+            return;
+        }
+
+        $target = @readlink($destinationFile);
+
+        /* A link this cannot read the target of: neither it nor whatever it points at is this
+           upload's to remove. */
+        if ($target === false) {
             return;
         }
 
