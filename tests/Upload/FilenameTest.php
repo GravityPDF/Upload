@@ -112,7 +112,68 @@ class FilenameTest extends TestCase
     }
 
     /**
-     * @dataProvider provideNamesToSplit
+     * `acceptExtension()` caps an extension at `MAX_EXTENSION_LENGTH`, so nothing in this
+     * library spends the whole budget — but `finalize()` takes the extension from its caller.
+     * A longer one made the name's budget negative, and a negative length means "cut this many
+     * bytes off the end" to `mb_strcut()` rather than "keep nothing".
+     */
+    public function testFinalizeSurvivesAnExtensionLongerThanTheWholeBudget(): void
+    {
+        $extension = str_repeat('x', Filename::MAX_LENGTH + 45);
+
+        $this->assertSame(Filename::FALLBACK, Filename::finalize('report', $extension));
+    }
+
+    /**
+     * `pathinfo()` treats `\` as a path separator on Windows and as an ordinary character on
+     * POSIX, so the same client name split two ways: `a\b.txt` was stored as `a-b.txt` here
+     * and `b.txt` there. `rewriteCharacters()` rewrites `\` to `-`, so the rule these layers
+     * share is that a backslash is part of the name.
+     *
+     * Every other case pins the `pathinfo()` behaviour this replaces, including the trailing
+     * slash `basename()` drops and the dotfile that is all extension and no name.
+     *
+     * @dataProvider provideFilenamesToSplit
+     *
+     * @param string[] $expected
+     */
+    public function testSplitNameAndExtension(string $filename, array $expected): void
+    {
+        $this->assertSame($expected, Filename::splitNameAndExtension($filename));
+    }
+
+    /**
+     * @return array<string, array<int, mixed>>
+     */
+    public function provideFilenamesToSplit(): array
+    {
+        return [
+            'an ordinary name' => ['report.txt', ['report', 'txt']],
+            'no extension' => ['report', ['report', '']],
+            'a trailing dot' => ['report.', ['report', '']],
+            'the last dot wins' => ['archive.tar.gz', ['archive.tar', 'gz']],
+            'a dotfile is all extension' => ['.htaccess', ['', 'htaccess']],
+            'empty' => ['', ['', '']],
+
+            /* A backslash is a character, on every platform */
+            'a backslash is not a separator' => ['a\\b.txt', ['a\\b', 'txt']],
+            'a windows path is not split' => ['..\\..\\windows\\win.ini', ['..\\..\\windows\\win', 'ini']],
+
+            /* A forward slash is one, on every platform */
+            'a slash is a separator' => ['a/b.txt', ['b', 'txt']],
+            'traversal is reduced' => ['../../etc/passwd', ['passwd', '']],
+            'a trailing slash is dropped' => ['photos/', ['photos', '']],
+            'repeated slashes' => ['a//b.txt//', ['b', 'txt']],
+            'a slash alone' => ['/', ['', '']],
+
+            /* pathinfo() answers `.` and `..` for these, and the deny-list is handed nothing */
+            'this directory' => ['..', ['.', '']],
+            'three dots' => ['...', ['..', '']],
+        ];
+    }
+
+    /**
+     * @dataProvider provideNamesToSplitIntoExtensionComponents
      *
      * @param string[] $expected
      */
@@ -124,7 +185,7 @@ class FilenameTest extends TestCase
     /**
      * @return array<string, array<int, mixed>>
      */
-    public function provideNamesToSplit(): array
+    public function provideNamesToSplitIntoExtensionComponents(): array
     {
         return [
             'an ordinary name' => ['evil.php', ['php']],
@@ -185,8 +246,12 @@ class FilenameTest extends TestCase
      */
     public function testSanitizeTextSurvivesWithoutMbstring(): void
     {
+        /* `chr()` rather than a quoted "a\nb": `escapeshellarg()` quotes with `"` on Windows
+           and cannot escape a `"` inside the argument, so the inner quotes were dropped and
+           PHP read `a\nb` as a constant. Nothing here needs a quote character of its own. */
         $script = sprintf(
-            'require %s; echo \GravityPdf\Upload\Filename::sanitizeForDisplay("a\nb");',
+            'require %s; echo \GravityPdf\Upload\Filename::sanitizeForDisplay('
+            . 'chr(97) . chr(10) . chr(98));',
             var_export(dirname(__DIR__, 2) . '/vendor/autoload.php', true)
         );
 

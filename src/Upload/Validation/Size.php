@@ -38,6 +38,7 @@ use GravityPdf\Upload\Exception;
 use GravityPdf\Upload\File;
 use GravityPdf\Upload\FileInfoInterface;
 use GravityPdf\Upload\ValidationInterface;
+use InvalidArgumentException;
 
 use function GravityPdf\Upload\__;
 
@@ -69,21 +70,64 @@ class Size implements ValidationInterface
     /**
      * @param int|string $maxSize Maximum acceptable file size in bytes (inclusive)
      * @param int|string $minSize Minimum acceptable file size in bytes (inclusive)
-     * @throws \InvalidArgumentException If a string bound cannot be parsed as a file size
+     * @throws InvalidArgumentException If a bound is not an int of bytes or a size string,
+     *                                  if a string bound cannot be parsed, or if the two
+     *                                  bounds accept nothing between them
      */
     public function __construct($maxSize, $minSize = 0)
     {
-        if (is_string($maxSize)) {
-            $maxSize = File::humanReadableToBytes($maxSize);
+        $this->maxSize = $this->toBytes($maxSize, 'maxSize');
+        $this->minSize = $this->toBytes($minSize, 'minSize');
+
+        if ($this->minSize > $this->maxSize) {
+            throw new InvalidArgumentException(sprintf(
+                'Size was given a minimum of %d bytes and a maximum of %d bytes, which no '
+                . 'file can satisfy. The maximum is the first argument.',
+                $this->minSize,
+                $this->maxSize
+            ));
+        }
+    }
+
+    /**
+     * Read one bound as a byte count
+     *
+     * The types are checked here rather than left to `scale()`, which is declared `int` and
+     * raises a `TypeError` on a float — from inside `validate()`, where `File::runValidations()`
+     * absorbs it as `Validation could not be completed` and shows the developer's
+     * misconfiguration to whoever submitted the file. A float is what a bound read out of JSON
+     * or arrived at by division is.
+     *
+     * @param mixed $size Whatever the caller passed, wider than the constructor's `int|string`
+     *                    because a docblock is not enforced at runtime
+     * @param string $parameter The parameter being read, named in the message
+     * @throws InvalidArgumentException If the bound cannot be a byte count
+     */
+    private function toBytes($size, string $parameter): int
+    {
+        if (is_string($size)) {
+            $size = File::humanReadableToBytes($size);
         }
 
-        $this->maxSize = $maxSize;
-
-        if (is_string($minSize)) {
-            $minSize = File::humanReadableToBytes($minSize);
+        if (!is_int($size)) {
+            throw new InvalidArgumentException(sprintf(
+                'Size::$%s must be an int of bytes or a string such as "5MB", %s given',
+                $parameter,
+                gettype($size)
+            ));
         }
 
-        $this->minSize = $minSize;
+        /* A negative maximum rejects every file, which `humanReadableToBytes()` already
+           refuses a string for. */
+        if ($size < 0) {
+            throw new InvalidArgumentException(sprintf(
+                'Size::$%s cannot be negative, %d given',
+                $parameter,
+                $size
+            ));
+        }
+
+        return $size;
     }
 
     /**

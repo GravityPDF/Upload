@@ -94,6 +94,25 @@ and what each one stops applying is in [Turning the defaults off](turning-the-de
 | `getDirectory(): string` | The destination directory, without trailing slash. |
 | `FileSystem::getDefaultBlockedExtensions(): string[]` | Static: `EXECUTABLE_EXTENSIONS` merged with `MARKUP_EXTENSIONS`, the table under "Extensions blocked by default". |
 
+### Two things it leaves in your upload directory
+
+Both are artefacts of the staged write, and clearing a stale one is the operator's job.
+
+`upload-<32 hex>.part` is the staging file, in the destination directory because `rename()`
+is only atomic within one file system. It exists for the length of one transfer and is
+removed on any failure. A process killed mid-transfer leaves one behind: the name is
+unguessable, so nothing will ever collide with it, and nothing will remove it either.
+
+The other is the 0-byte placeholder, and only with `$overwrite = false`. The destination
+name is claimed before the bytes move, so two concurrent requests cannot both win it, and
+`rename()` replaces the placeholder with the finished upload. A process killed between the
+two leaves a 0-byte file under the caller's name, and every later upload of that name
+reports `A file named "…" already exists` until it is cleared. There is no such window with
+`$overwrite = true`, which does not reserve the name at all.
+
+A sweep for `upload-*.part` and 0-byte files older than your longest plausible request is
+enough. Both are ordinary files; nothing in this library reads them back.
+
 ## Validations
 
 Each implements `ValidationInterface` and throws `Exception` on failure.
@@ -120,7 +139,8 @@ a public extension point and inventing a filename is not storage's job.
 | `Filename::sanitizeNameWithExtension(string $filename, ?array $reserved = null): string` | The whole treatment for one string: splits name from extension, rewrites the first, validates the second, fits both to `MAX_LENGTH`. This is what `getErrors()` runs client-supplied names through. `$reserved` replaces `RESERVED_WINDOWS_NAMES`, for a `FileInfo` subclass that overrides which names it blanks. |
 | `Filename::sanitizeForDisplay(string $value, int $maxLength = Filename::MAX_DISPLAY_LENGTH): string` | The same character sets applied to prose rather than to a name: bidi controls deleted, runs of control characters collapsed to a single space, the result cut to `$maxLength` bytes, forced to valid UTF-8 where `ext-mbstring` is loaded, then trimmed of surrounding whitespace. No device-name blanking, and `%`, `/` and dots are left alone. **It does not escape** `<`, `>`, `&` or `"`, so escape on output as well. This is what `getErrors()` runs a validation failure's message through; use it for error strings of your own. |
 | `Filename::acceptExtension(string $extension, ?array $reserved = null): string` | The extension this library will keep, or `''` for one it will not. What `setExtension()` validates with. |
-| `Filename::hasControlCharacters(string $value): bool` / `hasBidiControls(string $value): bool` | The two refusals `Storage\FileSystem` applies to a name. Use these rather than the constants below. |
+| `Filename::hasControlCharacters(string $value): bool` / `hasBidiControls(string $value): bool` | Two of the refusals `Storage\FileSystem` applies to a name. Use these rather than the constants below. |
+| `Filename::exceedsMaxLength(string $filename): bool` | Whether a name and its extension together spend more than `MAX_LENGTH` bytes. The third refusal, and what `FileInfo` truncates to. |
 | `Filename::deviceComponent(string $filename): string` / `isReservedDeviceComponent(string $value, ?array $reserved = null): bool` | The component that decides whether a name resolves to a Windows device, and whether it does. Windows ignores spaces around the name and everything from the first dot on, so `" con .txt"` is `con`. |
 | `Filename::extensionComponents(string $filename): string[]` | Every dot-separated component after the first, lowercased and trimmed — what a deny-list is matched against. The first is dropped: a file called `php` is not a file that runs as PHP. |
 | `Filename::MAX_LENGTH` / `MAX_EXTENSION_LENGTH` | `255` and `32` bytes. The name's budget is `MAX_LENGTH` minus the extension and its dot. |

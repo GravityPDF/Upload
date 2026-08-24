@@ -968,7 +968,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     }
 
     /**
-     * @param int $offset
+     * @param int|null $offset Null for `$file[] = $fileInfo`, which appends
      * @param mixed $value A FileInfoInterface; the type is checked at runtime, not declared
      * @throws InvalidArgumentException If the value is not a FileInfoInterface
      */
@@ -979,6 +979,16 @@ class File implements ArrayAccess, IteratorAggregate, Countable
             throw new InvalidArgumentException(
                 'Value must be an instance of ' . FileInfoInterface::class
             );
+        }
+
+        /* PHP hands this method a null offset for `$file[] = $fileInfo`. Assigned straight
+           through, that writes the string key `''` rather than appending: the second append
+           overwrote the first, and a key the `ArrayAccess<int, FileInfoInterface>` annotation
+           does not admit reached `getUploadedLocators()`. PHP 8.5 deprecates it as well. */
+        if ($offset === null) {
+            $this->objects[] = $value;
+
+            return;
         }
 
         $this->objects[$offset] = $value;

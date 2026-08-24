@@ -288,6 +288,25 @@ class FileListTest extends TestCase
         $this->assertSame([], $list->getSourceKeys());
     }
 
+    /**
+     * `$list[] = $file` reaches `offsetSet()` with a null offset, which is not an offset the
+     * caller gave a key for. The append has to land at a fresh integer, and the key drop has
+     * to find the offset it landed at rather than reaching `$sourceKeys['']`.
+     */
+    public function testAppendingKeepsTheCollectionAndTheKeysInStep(): void
+    {
+        $list = new FileList(['avatar' => $this->vouchedFile('foo.txt')], $this->storage);
+
+        $list[] = $this->vouchedFile('bar.txt');
+
+        $this->assertCount(2, $list);
+        $this->assertSame([0, 1], array_keys(iterator_to_array($list)));
+        $this->assertSame('bar.txt', $list[1] === null ? null : $list[1]->getNameWithExtension());
+
+        /* The appended file has no key of the caller's, and the one that does keeps it */
+        $this->assertSame([0 => 'avatar'], $list->getSourceKeys());
+    }
+
     /********************************************************************************
      * Failed-transfer tests
      *******************************************************************************/
@@ -386,6 +405,8 @@ class FileListTest extends TestCase
      * write this, since a test's own file is not a POST upload — hides the fact that a
      * caller's file is not one either, and the whole path reported green while it could not
      * store a byte.
+     *
+     * @group posix
      */
     public function testAVouchedFileIsValidatedSanitizedAndStored(): void
     {
@@ -400,8 +421,9 @@ class FileListTest extends TestCase
 
         $this->assertTrue($list->upload());
 
-        /* The interior dot is rewritten by `FileInfo::setName()`, as on the `$_FILES` path */
-        $stored = $workingDirectory . '/holiday-photo.txt';
+        /* The interior dot is rewritten by `FileInfo::setName()`, as on the `$_FILES` path.
+           Joined with `DIRECTORY_SEPARATOR` because that is how storage composes a locator. */
+        $stored = $workingDirectory . DIRECTORY_SEPARATOR . 'holiday-photo.txt';
 
         $this->assertSame([$stored], $list->getUploadedLocators());
         $this->assertFileExists($stored);
@@ -482,7 +504,7 @@ class FileListTest extends TestCase
 
         foreach (['beforeValidate', 'afterValidate', 'beforeUpload', 'afterUpload'] as $hook) {
             $list->$hook(static function (FileInfoInterface $fileInfo) use ($hook): void {
-                echo ucfirst($hook) . ': ' . $fileInfo->getName(), PHP_EOL;
+                echo ucfirst($hook) . ': ' . $fileInfo->getName(), "\n";
             });
         }
 

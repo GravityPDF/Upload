@@ -143,10 +143,45 @@ final class Filename
      */
     public static function sanitizeNameWithExtension(string $filename, ?array $reserved = null): string
     {
-        $extension = self::acceptExtension((string) pathinfo($filename, PATHINFO_EXTENSION), $reserved);
-        $name = self::sanitizeName((string) pathinfo($filename, PATHINFO_FILENAME), $extension, $reserved);
+        list($name, $extension) = self::splitNameAndExtension($filename);
+
+        $extension = self::acceptExtension($extension, $reserved);
+        $name = self::sanitizeName($name, $extension, $reserved);
 
         return $extension === '' ? $name : sprintf('%s.%s', $name, $extension);
+    }
+
+    /**
+     * Split a client-supplied filename into the name and the extension
+     *
+     * What `pathinfo()`'s `PATHINFO_FILENAME` and `PATHINFO_EXTENSION` answer, except that `/`
+     * is the only separator. `pathinfo()` treats `\` as one on Windows and not on POSIX, so
+     * `a\b.txt` was stored as `a-b.txt` here and `b.txt` there. `rewriteCharacters()` rewrites
+     * `\` to `-`, so the rule both layers share is that a backslash is a character in the name.
+     *
+     * Trailing slashes go first, so `photos/` still names `photos`.
+     *
+     * @return array<int, string> The name and the extension, either of which may be `''`
+     * @phpstan-return array{0: string, 1: string}
+     *
+     * @internal Not part of the public API
+     */
+    public static function splitNameAndExtension(string $filename): array
+    {
+        $filename = rtrim($filename, '/');
+
+        $separator = strrpos($filename, '/');
+        $basename = $separator === false ? $filename : substr($filename, $separator + 1);
+
+        /* The last dot, wherever it is: `.htaccess` is all extension and no name, as
+           `pathinfo()` answers. */
+        $dot = strrpos($basename, '.');
+
+        if ($dot === false) {
+            return [$basename, ''];
+        }
+
+        return [substr($basename, 0, $dot), substr($basename, $dot + 1)];
     }
 
     /**
@@ -270,10 +305,14 @@ final class Filename
 
     /**
      * How many bytes a name may use once its extension has taken its share
+     *
+     * Floored at zero. `finalize()` takes the extension from its caller, and one longer than
+     * `acceptExtension()` would keep made this negative — which `mb_strcut()` reads as "cut
+     * this many bytes off the end".
      */
     private static function maxNameLength(string $extension): int
     {
-        return self::MAX_LENGTH - ($extension !== '' ? strlen($extension) + 1 : 0);
+        return max(0, self::MAX_LENGTH - ($extension !== '' ? strlen($extension) + 1 : 0));
     }
 
     /**
@@ -379,6 +418,18 @@ final class Filename
             $reserved === null ? self::RESERVED_WINDOWS_NAMES : $reserved,
             true
         );
+    }
+
+    /**
+     * Whether a name and its extension together spend more than the byte budget
+     *
+     * Bytes rather than characters, and the whole name rather than either half: it is the same
+     * `MAX_LENGTH` `sanitizeName()` truncates to, asked as a question. `FileInfo` fits a name
+     * to it, so only a `FileInfoInterface` of your own hands storage one that does not.
+     */
+    public static function exceedsMaxLength(string $filename): bool
+    {
+        return strlen($filename) > self::MAX_LENGTH;
     }
 
     public static function hasControlCharacters(string $value): bool

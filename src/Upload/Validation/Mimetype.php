@@ -33,6 +33,7 @@ declare(strict_types=1);
 
 namespace GravityPdf\Upload\Validation;
 
+use GravityPdf\Upload\AsciiCase;
 use GravityPdf\Upload\ErrorCode;
 use GravityPdf\Upload\Exception;
 use GravityPdf\Upload\FileInfoInterface;
@@ -54,7 +55,7 @@ use function GravityPdf\Upload\__;
  */
 class Mimetype implements ValidationInterface
 {
-    /** @var string[] Valid media types */
+    /** @var string[] Valid media types, lowercased */
     protected $mimetypes;
 
     /**
@@ -65,7 +66,21 @@ class Mimetype implements ValidationInterface
         if (is_string($mimetypes)) {
             $mimetypes = [$mimetypes];
         }
-        $this->mimetypes = $mimetypes;
+
+        /* Folded, as `Extension` and `FileType` fold theirs. A media type is case-insensitive
+           and `FileInfo::getMimetype()` answers lowercase, so `'IMAGE/PNG'` matched nothing.
+           An entry left empty by the trim is dropped rather than registered, for the reason
+           `FileType::normalize()` drops one: `getMimetype()` answers `''` for a file it cannot
+           read, so `' '` in the list would accept exactly those. */
+        $this->mimetypes = [];
+
+        foreach ($mimetypes as $mimetype) {
+            $mimetype = AsciiCase::toLower(trim($mimetype));
+
+            if ($mimetype !== '') {
+                $this->mimetypes[] = $mimetype;
+            }
+        }
     }
 
     /**
@@ -73,7 +88,10 @@ class Mimetype implements ValidationInterface
      */
     public function validate(FileInfoInterface $fileInfo): void
     {
-        if (!in_array($fileInfo->getMimetype(), $this->mimetypes, true)) {
+        /* The shipped FileInfo lowercases in getMimetype(); a custom FileInfoInterface need not */
+        $mimetype = AsciiCase::toLower(trim($fileInfo->getMimetype()));
+
+        if (!in_array($mimetype, $this->mimetypes, true)) {
             throw new Exception(
                 /* translators: %1$s: comma-separated list of the accepted media types */
                 __('Invalid mimetype. Must be one of: %1$s'),
