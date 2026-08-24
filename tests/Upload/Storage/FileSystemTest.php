@@ -181,11 +181,8 @@ class FileSystemTest extends TestCase
             'numbered device' => ['COM0.log'],
             'superscript device' => ["LPT\u{00B9}.log"],
 
-            /* `FileInfo` truncates to `Filename::MAX_LENGTH`; only an implementation of your
-               own arrives over it. Without this refusal the name reached the exclusive create
-               and failed on the file system's own ENAMETOOLONG, reported as
-               'Destination file could not be created' — the code that means the directory
-               went away, which sends a caller down a retry that cannot succeed. */
+            /* `FileInfo` truncates to `Filename::MAX_LENGTH`, so only an implementation of
+               your own arrives over it. See `refuseUnsafeName()`. */
             'longer than MAX_LENGTH' => [str_repeat('a', 252) . '.txt'],
         ];
     }
@@ -698,22 +695,12 @@ class FileSystemTest extends TestCase
      * exception is written to a log, which is the thing a control character forges a line in
      * and a bidi control reorders.
      *
-     * @dataProvider providerNamesAnOverriddenSeamMayReturn
      */
-    public function testCollisionMessageSanitizesTheNameItQuotes(string $name, string $message): void
+    public function testCollisionMessageSanitizesTheNameItQuotes(): void
     {
-        $workingDirectory = $this->makeWorkingDirectory();
-        $destinationFile = $workingDirectory . '/' . $name;
-
-        /* Something already under the name, so the exclusive create finds it in the way */
-        touch($destinationFile);
-
-        $this->expectException(Exception::class);
-        $this->expectExceptionMessage($message);
-
-        (new ExposedFileSystem($workingDirectory))->reserve(
-            $destinationFile,
-            $this->makeHostileFileInfo($name)
+        $this->assertCollisionMessageQuotes(
+            "resume\xE2\x80\xAEtxt.gpj",
+            'A file named "resumetxt.gpj" already exists'
         );
     }
 
@@ -731,7 +718,24 @@ class FileSystemTest extends TestCase
         string $name,
         string $message
     ): void {
-        $this->testCollisionMessageSanitizesTheNameItQuotes($name, $message);
+        $this->assertCollisionMessageQuotes($name, $message);
+    }
+
+    private function assertCollisionMessageQuotes(string $name, string $message): void
+    {
+        $workingDirectory = $this->makeWorkingDirectory();
+        $destinationFile = $workingDirectory . '/' . $name;
+
+        /* Something already under the name, so the exclusive create finds it in the way */
+        touch($destinationFile);
+
+        $this->expectException(Exception::class);
+        $this->expectExceptionMessage($message);
+
+        (new ExposedFileSystem($workingDirectory))->reserve(
+            $destinationFile,
+            $this->makeHostileFileInfo($name)
+        );
     }
 
     /**
@@ -742,16 +746,6 @@ class FileSystemTest extends TestCase
         return [
             'controls collapsed' => ["report\x07\x08.txt", 'A file named "report .txt" already exists'],
             'nothing but controls' => ["\x01\x02", 'A file with that name already exists'],
-        ];
-    }
-
-    /**
-     * @return array<string, array<int, string>>
-     */
-    public function providerNamesAnOverriddenSeamMayReturn(): array
-    {
-        return [
-            'bidi deleted' => ["resume\xE2\x80\xAEtxt.gpj", 'A file named "resumetxt.gpj" already exists'],
         ];
     }
 
@@ -936,8 +930,11 @@ class FileSystemTest extends TestCase
         $this->assertFileExists($source);
     }
 
-    /** The opt-out, and the whole of it: everything else about the write is unchanged */
-    /** @group posix */
+    /**
+     * The opt-out, and the whole of it: everything else about the write is unchanged
+     *
+     * @group posix
+     */
     public function testStoresAFileNotUploadedByPhpOnceTheCallerAllowsIt(): void
     {
         $workingDirectory = $this->makeWorkingDirectory();
@@ -1141,9 +1138,6 @@ class FileSystemTest extends TestCase
     }
 
     /**
-     * A scratch directory that is removed again in tear_down()
-     */
-    /**
      * The path `upload()` will return for a name stored in this directory
      *
      * It composes that as `$this->directory . $filename`, and the constructor ends the
@@ -1156,6 +1150,9 @@ class FileSystemTest extends TestCase
         return $directory . DIRECTORY_SEPARATOR . $filename;
     }
 
+    /**
+     * A scratch directory that is removed again in tear_down()
+     */
     protected function makeWorkingDirectory(): string
     {
         $workingDirectory = sys_get_temp_dir() . '/upload-test-' . uniqid('', true) . '/uploads';
@@ -1173,13 +1170,14 @@ class FileSystemTest extends TestCase
      * @param string $directory
      * @param bool $overwrite
      * @param callable|null $move
+     * @param string[] $extraMethods Further seams to stub, for a test that also drives one
      * @return FileSystem&\PHPUnit\Framework\MockObject\MockObject
      */
-    protected function makeStorage(string $directory, bool $overwrite, $move = null)
+    protected function makeStorage(string $directory, bool $overwrite, $move = null, array $extraMethods = [])
     {
         $storage = $this->getMockBuilder(FileSystem::class)
             ->setConstructorArgs([$directory, $overwrite])
-            ->onlyMethods(['moveUploadedFile'])
+            ->onlyMethods(array_merge(['moveUploadedFile'], $extraMethods))
             ->getMock();
 
         if ($move === null) {
@@ -1375,10 +1373,7 @@ class FileSystemTest extends TestCase
     {
         $workingDirectory = $this->makeWorkingDirectory();
 
-        $storage = $this->getMockBuilder(FileSystem::class)
-            ->setConstructorArgs([$workingDirectory, false])
-            ->onlyMethods(['moveUploadedFile', 'lstatEntry'])
-            ->getMock();
+        $storage = $this->makeStorage($workingDirectory, false, null, ['lstatEntry']);
 
         $storage->method('lstatEntry')->willReturn(false);
 
@@ -1406,16 +1401,7 @@ class FileSystemTest extends TestCase
     {
         $workingDirectory = $this->makeWorkingDirectory();
 
-        $storage = $this->getMockBuilder(FileSystem::class)
-            ->setConstructorArgs([$workingDirectory, false])
-            ->onlyMethods(['moveUploadedFile', 'lstatEntry'])
-            ->getMock();
-
-        $storage->method('moveUploadedFile')->willReturnCallback(
-            static function (string $source, string $destination): bool {
-                return copy($source, $destination);
-            }
-        );
+        $storage = $this->makeStorage($workingDirectory, false, null, ['lstatEntry']);
 
         /* What that platform answers: no inode, and a `dev` of its own */
         $storage->method('lstatEntry')->willReturn(['dev' => 2, 'ino' => 0]);

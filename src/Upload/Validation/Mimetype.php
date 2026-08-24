@@ -68,14 +68,19 @@ class Mimetype implements ValidationInterface
         }
 
         /* Folded, as `Extension` and `FileType` fold theirs. A media type is case-insensitive
-           and `FileInfo::getMimetype()` always answers lowercase, so `'IMAGE/PNG'` matched
-           nothing and rejected every file the list was written to accept. */
-        $this->mimetypes = array_map(
-            static function (string $mimetype): string {
-                return AsciiCase::toLower(trim($mimetype));
-            },
-            $mimetypes
-        );
+           and `FileInfo::getMimetype()` answers lowercase, so `'IMAGE/PNG'` matched nothing.
+           An entry left empty by the trim is dropped rather than registered, for the reason
+           `FileType::normalize()` drops one: `getMimetype()` answers `''` for a file it cannot
+           read, so `' '` in the list would accept exactly those. */
+        $this->mimetypes = [];
+
+        foreach ($mimetypes as $mimetype) {
+            $mimetype = AsciiCase::toLower(trim($mimetype));
+
+            if ($mimetype !== '') {
+                $this->mimetypes[] = $mimetype;
+            }
+        }
     }
 
     /**

@@ -983,9 +983,8 @@ class File implements ArrayAccess, IteratorAggregate, Countable
 
         /* PHP hands this method a null offset for `$file[] = $fileInfo`. Assigned straight
            through, that writes the string key `''` rather than appending: the second append
-           overwrote the first, and `getUploadedLocators()` — which `store()` keys by
-           collection offset — came back with a key the `ArrayAccess<int, FileInfoInterface>`
-           annotation does not admit. PHP 8.5 deprecates the null offset as well. */
+           overwrote the first, and a key the `ArrayAccess<int, FileInfoInterface>` annotation
+           does not admit reached `getUploadedLocators()`. PHP 8.5 deprecates it as well. */
         if ($offset === null) {
             $this->objects[] = $value;
 

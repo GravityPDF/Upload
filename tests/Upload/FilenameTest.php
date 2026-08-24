@@ -173,7 +173,7 @@ class FilenameTest extends TestCase
     }
 
     /**
-     * @dataProvider provideNamesToSplit
+     * @dataProvider provideNamesToSplitIntoExtensionComponents
      *
      * @param string[] $expected
      */
@@ -185,7 +185,7 @@ class FilenameTest extends TestCase
     /**
      * @return array<string, array<int, mixed>>
      */
-    public function provideNamesToSplit(): array
+    public function provideNamesToSplitIntoExtensionComponents(): array
     {
         return [
             'an ordinary name' => ['evil.php', ['php']],

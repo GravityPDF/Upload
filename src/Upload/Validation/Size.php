@@ -93,17 +93,13 @@ class Size implements ValidationInterface
      * Read one bound as a byte count
      *
      * The types are checked here rather than left to `scale()`, which is declared `int` and
-     * raises a `TypeError` when a bound is a float — from inside `validate()`, where
-     * `File::runValidations()` absorbs it as `Validation could not be completed` and reports
-     * the developer's misconfiguration to whoever submitted the file. A float is what a bound
-     * read out of JSON or arrived at by division actually is.
+     * raises a `TypeError` on a float — from inside `validate()`, where `File::runValidations()`
+     * absorbs it as `Validation could not be completed` and shows the developer's
+     * misconfiguration to whoever submitted the file. A float is what a bound read out of JSON
+     * or arrived at by division is.
      *
-     * `InvalidArgumentException` is a `LogicException`, which that run re-throws, so a bound
-     * rejected after construction still reaches the developer.
-     *
-     * @param mixed $size Whatever the caller passed. Declared wider than the constructor's
-     *                    `int|string`, because a docblock is not enforced at runtime and this
-     *                    method exists to answer for the values that ignore it
+     * @param mixed $size Whatever the caller passed, wider than the constructor's `int|string`
+     *                    because a docblock is not enforced at runtime
      * @param string $parameter The parameter being read, named in the message
      * @throws InvalidArgumentException If the bound cannot be a byte count
      */
@@ -121,8 +117,8 @@ class Size implements ValidationInterface
             ));
         }
 
-        /* A negative bound reads as generous and rejects every upload, which is the failure
-           `File::humanReadableToBytes()` already refuses a string for. */
+        /* A negative maximum rejects every file, which `humanReadableToBytes()` already
+           refuses a string for. */
         if ($size < 0) {
             throw new InvalidArgumentException(sprintf(
                 'Size::$%s cannot be negative, %d given',

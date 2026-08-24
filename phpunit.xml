@@ -1,7 +1,6 @@
 <!-- convertDeprecationsToExceptions, because a deprecation raised from src/ otherwise passes
      straight through a green run: `$file[] = $fileInfo` wrote a string key and warned about it
-     on PHP 8.5 for a release, with the suite reporting OK. This library supports 7.3 to 8.5,
-     which is the range where a deprecation is the notice before the break. -->
+     on PHP 8.5 for a release, with the suite reporting OK. -->
 <phpunit backupGlobals="true"
          convertDeprecationsToExceptions="true"
          failOnWarning="true"

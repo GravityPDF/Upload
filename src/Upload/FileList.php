@@ -174,14 +174,13 @@ class FileList extends File
     {
         parent::offsetSet($offset, $value);
 
-        /* An append has no offset of the caller's to drop, so read back the one it landed at
-           rather than assuming which that is: `unset($this->sourceKeys[null])` reaches the key
-           `''` and leaves the real entry in place. The parent has just written, so the array
-           cannot be empty — the null check is for the analyser. */
-        $written = $offset ?? array_key_last($this->objects);
-
-        if ($written !== null) {
-            unset($this->sourceKeys[$written]);
+        /* An append has no offset of the caller's to drop, and lands at a key `$sourceKeys`
+           cannot hold: the constructor puts the caller's offsets there and entries only ever
+           leave. Guarded rather than dropped unconditionally, because
+           `unset($this->sourceKeys[null])` reaches the key `''` and leaves the real entry in
+           place. */
+        if ($offset !== null) {
+            unset($this->sourceKeys[$offset]);
         }
     }
 

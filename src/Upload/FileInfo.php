@@ -189,8 +189,8 @@ class FileInfo extends SplFileInfo implements FileInfoInterface
 
     public function setNameWithExtension(string $name): FileInfo
     {
-        /* `Filename` rather than `pathinfo()`, which treats `\` as a separator on Windows and
-           not on POSIX — the same client name split two ways. See splitNameAndExtension(). */
+        /* Not `pathinfo()`, which treats `\` as a separator on Windows alone: see
+           `Filename::splitNameAndExtension()`. */
         list($base, $extension) = Filename::splitNameAndExtension($name);
 
         /* Not setExtension(): that re-fits the name to the new budget, and the setName() below

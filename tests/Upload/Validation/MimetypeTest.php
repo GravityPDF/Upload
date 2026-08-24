@@ -72,6 +72,20 @@ class MimetypeTest extends TestCase
     }
 
     /**
+     * `getMimetype()` answers `''` for a file it cannot read, so an entry the trim empties
+     * would accept exactly those — the drop `FileType::normalize()` makes for the same reason.
+     */
+    public function testAnEmptyEntryDoesNotAcceptAnUnreadableFile(): void
+    {
+        $this->expectException(Exception::class);
+
+        $fileInfo = $this->createMock(\GravityPdf\Upload\FileInfoInterface::class);
+        $fileInfo->method('getMimetype')->willReturn('');
+
+        (new Mimetype([' ']))->validate($fileInfo);
+    }
+
+    /**
      * A custom `FileInfoInterface` is a public extension point and need not lowercase what it
      * sniffs, which is the half `FileType` already folds.
      */

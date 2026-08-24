@@ -343,7 +343,9 @@ Each of these is listed in full in the [changelog](CHANGELOG.md).
 * **`Validation\Mimetype` lowercases its allow-list**, as `Extension` and `FileType` already
   did. A list written in any other case previously matched nothing and rejected every upload,
   so **a `new Mimetype(['IMAGE/PNG'])` that appeared to be rejecting files correctly will now
-  start accepting them.** Check any list that is not already lowercase.
+  start accepting them.** Check any list that is not already lowercase. An entry that is empty
+  once trimmed is dropped from the list rather than matching the `''` that `getMimetype()`
+  answers for a file it cannot read.
 * `Storage\FileSystem` refuses a destination name longer than `Filename::MAX_LENGTH`
   (255 bytes) with `'Invalid destination file name'`, where it used to fail at the write with
   `'Destination file could not be created'`. Only reachable from a `FileInfoInterface` of your

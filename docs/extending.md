@@ -120,6 +120,6 @@ class ObjectStorage implements StorageInterface
 The protections under "Security notes" (the deny-list, the `basename()` reduction, the
 symlink refusal, the staged write) live in `Storage\FileSystem`. A custom backend needs its own
 equivalents, and does not have to restate the rules to get them: [`Filename`](api-reference.md#filename) is
-public for this, with `hasControlCharacters()`, `hasBidiControls()`, `deviceComponent()`,
-`isReservedDeviceComponent()` and `extensionComponents()` answering exactly what the shipped
-storage asks before it writes.
+public for this, with `hasControlCharacters()`, `hasBidiControls()`, `exceedsMaxLength()`,
+`deviceComponent()`, `isReservedDeviceComponent()` and `extensionComponents()` answering
+exactly what the shipped storage asks before it writes.

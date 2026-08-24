@@ -155,13 +155,11 @@ final class Filename
      * Split a client-supplied filename into the name and the extension
      *
      * What `pathinfo()`'s `PATHINFO_FILENAME` and `PATHINFO_EXTENSION` answer, except that `/`
-     * is the only separator. `pathinfo()` treats `\` as one on Windows and not on POSIX, so the
-     * same name split two ways: `a\b.txt` was stored as `a-b.txt` here and `b.txt` there.
-     * `rewriteCharacters()` rewrites `\` to `-`, so the rule both layers share is that a
-     * backslash is a character in the name — and a rule cannot depend on which platform is
-     * applying it.
+     * is the only separator. `pathinfo()` treats `\` as one on Windows and not on POSIX, so
+     * `a\b.txt` was stored as `a-b.txt` here and `b.txt` there. `rewriteCharacters()` rewrites
+     * `\` to `-`, so the rule both layers share is that a backslash is a character in the name.
      *
-     * Trailing slashes go first, as `basename()` drops them, so `photos/` still names `photos`.
+     * Trailing slashes go first, so `photos/` still names `photos`.
      *
      * @return array<int, string> The name and the extension, either of which may be `''`
      * @phpstan-return array{0: string, 1: string}
@@ -175,8 +173,8 @@ final class Filename
         $separator = strrpos($filename, '/');
         $basename = $separator === false ? $filename : substr($filename, $separator + 1);
 
-        /* The last dot, wherever it is: `.htaccess` is all extension and no name, which is what
-           `pathinfo()` answers and what the storage deny-list is then handed. */
+        /* The last dot, wherever it is: `.htaccess` is all extension and no name, as
+           `pathinfo()` answers. */
         $dot = strrpos($basename, '.');
 
         if ($dot === false) {
@@ -308,14 +306,13 @@ final class Filename
     /**
      * How many bytes a name may use once its extension has taken its share
      *
-     * Floored at zero. `acceptExtension()` caps an extension at `MAX_EXTENSION_LENGTH`, so
-     * nothing in this library spends the whole budget, but `finalize()` takes the extension
-     * from its caller: a longer one made this negative, and a negative length means "cut this
-     * many bytes off the end" to `mb_strcut()`.
+     * Floored at zero. `finalize()` takes the extension from its caller, and one longer than
+     * `acceptExtension()` would keep made this negative — which `mb_strcut()` reads as "cut
+     * this many bytes off the end".
      */
     private static function maxNameLength(string $extension): int
     {
-        return (int) max(0, self::MAX_LENGTH - ($extension !== '' ? strlen($extension) + 1 : 0));
+        return max(0, self::MAX_LENGTH - ($extension !== '' ? strlen($extension) + 1 : 0));
     }
 
     /**
@@ -421,6 +418,18 @@ final class Filename
             $reserved === null ? self::RESERVED_WINDOWS_NAMES : $reserved,
             true
         );
+    }
+
+    /**
+     * Whether a name and its extension together spend more than the byte budget
+     *
+     * Bytes rather than characters, and the whole name rather than either half: it is the same
+     * `MAX_LENGTH` `sanitizeName()` truncates to, asked as a question. `FileInfo` fits a name
+     * to it, so only a `FileInfoInterface` of your own hands storage one that does not.
+     */
+    public static function exceedsMaxLength(string $filename): bool
+    {
+        return strlen($filename) > self::MAX_LENGTH;
     }
 
     public static function hasControlCharacters(string $value): bool

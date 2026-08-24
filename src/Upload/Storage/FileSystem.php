@@ -155,10 +155,9 @@ class FileSystem implements StorageInterface
             throw new InvalidArgumentException('Directory is not writable');
         }
 
-        /* Both separators, or a Windows path already ending in one gains a second: `/` alone
-           left `C:\uploads\` as `C:\uploads\\`, where `getDirectory()` trims what this line
-           does not. On POSIX the charlist is `/` either way, so a directory legitimately
-           named with a trailing backslash is untouched. */
+        /* Both separators, since a Windows path may end in either: `/` alone left
+           `C:\uploads\` as `C:\uploads\\`. On POSIX the charlist is `/` either way, so a
+           directory named with a trailing backslash keeps it. */
         $this->directory = rtrim($directory, DIRECTORY_SEPARATOR . '/') . DIRECTORY_SEPARATOR;
         $this->overwrite = $overwrite;
 
@@ -453,11 +452,10 @@ class FileSystem implements StorageInterface
            is the destination only if the directory entry is that same file; a symlink has an
            inode of its own, so a mismatch means the name was a link.
 
-           POSIX only. Before PHP 7.4 `stat()` on Windows reports `ino` as 0, so this
-           comparison has no information — the guard below skips it rather than reading no
-           information as a mismatch, which refused every upload on that platform. Windows
-           symlinks need a privilege an uploading process should not hold, so the residual risk
-           is small, but the symlink protections in this class are not load-bearing there. */
+           POSIX only. `isSameFile()` answers `null` where the platform reports no inode,
+           which is Windows before PHP 7.4. A symlink there needs a privilege an uploading
+           process should not hold, so the residual risk is small, but the symlink protections
+           in this class are not load-bearing on it. */
         $entry = $this->lstatEntry($destinationFile);
 
         if ($opened === false || $entry === false) {
@@ -474,17 +472,7 @@ class FileSystem implements StorageInterface
             );
         }
 
-        /* An inode of 0 is what Windows reports before PHP 7.4, for both stats, so the
-           comparison below has nothing to compare. Treating that as a mismatch answered
-           'Destination is a symbolic link' to every reservation, which is every upload the
-           default configuration makes — the platform could not store a file at all. Skipped
-           rather than failed: nothing has been established either way, and the symlink
-           protections here were never load-bearing on Windows, where a symlink needs a
-           privilege an uploading process should not hold. A real file has a real inode, so
-           this gives up nothing on POSIX. */
-        $identified = $opened['ino'] !== 0 && $entry['ino'] !== 0;
-
-        if ($identified && ($opened['dev'] !== $entry['dev'] || $opened['ino'] !== $entry['ino'])) {
+        if (self::isSameFile($opened, $entry) === false) {
             /* The write is already refused at this point and nothing of the victim's was
                overwritten, but `x` has created a file at the far end of the link, outside the
                upload directory. Take that back too. */
@@ -523,12 +511,11 @@ class FileSystem implements StorageInterface
      */
     private function releaseReservation(string $destinationFile, $opened): void
     {
-        /* `is_link()` rather than a failed `readlink()`, which is not the same question on
-           every platform: PHP's Windows `readlink()` answers a *regular file* with its own
-           canonical path instead of failing, so the placeholder took the link branch below,
-           matched nothing there and was never removed — leaving the caller's name held
-           against every later upload. The stat cache is cleared because `reserveDestination()`
-           has already lstat'd this path. */
+        /* `is_link()` rather than a failed `readlink()`: PHP's Windows `readlink()` answers a
+           regular file with its own canonical path instead of failing, so the placeholder took
+           the link branch below, matched nothing there and was left holding the caller's name.
+           The stat cache is cleared because `reserveDestination()` has already lstat'd this
+           path. */
         clearstatcache(true, $destinationFile);
 
         if (!is_link($destinationFile)) {
@@ -538,20 +525,19 @@ class FileSystem implements StorageInterface
             return;
         }
 
-        $target = @readlink($destinationFile);
-
-        /* A link this cannot read the target of: neither it nor whatever it points at is this
-           upload's to remove. */
-        if ($target === false) {
+        /* A symlink was already here and `x` created its target. Remove that file and only that
+           file: the inode has to be the one this call opened, so a link re-pointed between the
+           create and this check cannot make us delete a bystander. Anything short of that
+           leaves the file behind, which is the safe way to be wrong — an unreadable target, an
+           inode the platform does not report. The link itself stays: it was not this upload's
+           to create, so it is not this upload's to remove. */
+        if ($opened === false) {
             return;
         }
 
-        /* A symlink was already here and `x` created its target. Remove that file and only that
-           file: the inode has to be the one this call opened, so a link re-pointed between the
-           create and this check cannot make us delete a bystander. Failing that test leaves the
-           file behind, which is the safe way to be wrong. The link itself stays — it was not
-           this upload's to create, so it is not this upload's to remove. */
-        if ($opened === false) {
+        $target = @readlink($destinationFile);
+
+        if ($target === false) {
             return;
         }
 
@@ -561,9 +547,34 @@ class FileSystem implements StorageInterface
 
         $stat = @lstat($target);
 
-        if ($stat !== false && $stat['dev'] === $opened['dev'] && $stat['ino'] === $opened['ino']) {
+        if ($stat !== false && self::isSameFile($stat, $opened) === true) {
             @unlink($target);
         }
+    }
+
+    /**
+     * Whether two stats describe the same file, or `null` where the platform cannot say
+     *
+     * Windows reports `ino` as 0 for every file before PHP 7.4, so a comparison there is
+     * between two absences. Read as a mismatch, that answered 'Destination is a symbolic link'
+     * to every reservation — which is every upload the default `$overwrite = false` makes, so
+     * the platform could not store a file at all. A real file has a real inode, so nothing is
+     * given up where the platform reports one.
+     *
+     * Both callers ask the same question of a `fstat()` and an `lstat()`, and both treat `null`
+     * as "leave it alone": the reservation is not refused as a symlink, and the file at the far
+     * end of one is not removed.
+     *
+     * @param array<int|string, int> $one
+     * @param array<int|string, int> $other
+     */
+    private static function isSameFile(array $one, array $other): ?bool
+    {
+        if ($one['ino'] === 0 || $other['ino'] === 0) {
+            return null;
+        }
+
+        return $one['dev'] === $other['dev'] && $one['ino'] === $other['ino'];
     }
 
     /**
@@ -634,11 +645,10 @@ class FileSystem implements StorageInterface
      * A leading dot is refused here rather than left to the deny-list, which is a list of
      * extensions and so does not cover `.env` at all.
      *
-     * `Filename::MAX_LENGTH` is refused here for the reason the two character sets are: it is
-     * a rule `FileInfo` applies by truncating, so only a `FileInfoInterface` of your own
-     * arrives over it. Without this the name travelled to the exclusive create and failed on
-     * the file system's own `ENAMETOOLONG`, reported as `DESTINATION_NOT_CREATED` — the code
-     * that is supposed to mean the directory went away.
+     * The length is refused for the reason the two character sets are: `FileInfo` applies it
+     * by truncating, so only a `FileInfoInterface` of your own arrives over it. Without this
+     * the name failed at the exclusive create on `ENAMETOOLONG`, reported as
+     * `DESTINATION_NOT_CREATED` — the code that means the directory went away.
      *
      * @throws Exception If the name is not one that may be written
      */
@@ -646,7 +656,7 @@ class FileSystem implements StorageInterface
     {
         if (
             $filename === ''
-            || strlen($filename) > Filename::MAX_LENGTH
+            || Filename::exceedsMaxLength($filename)
             || strpos($filename, '.') === 0
             || Filename::hasControlCharacters($filename)
             || Filename::hasBidiControls($filename)

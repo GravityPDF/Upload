@@ -35,8 +35,8 @@ jobs:
 
       # --strict, because this manifest is published: a missing `name` or an unbound version
       # constraint is an error here where it is only a warning for an application. The three
-      # manifests under tools/ are deliberately not published and pin exact versions, so they
-      # are not checked — that pinning is what makes the doc checks reproducible.
+      # manifests under tools/ are not published and pin exact versions, so they are not
+      # checked.
       - name: Validate composer.json
         run: composer validate --strict --no-check-lock
 
