@@ -503,7 +503,7 @@ class FileListTest extends TestCase
 
         foreach (['beforeValidate', 'afterValidate', 'beforeUpload', 'afterUpload'] as $hook) {
             $list->$hook(static function (FileInfoInterface $fileInfo) use ($hook): void {
-                echo ucfirst($hook) . ': ' . $fileInfo->getName(), PHP_EOL;
+                echo ucfirst($hook) . ': ' . $fileInfo->getName(), "\n";
             });
         }
 

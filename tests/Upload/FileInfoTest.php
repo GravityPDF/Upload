@@ -277,6 +277,15 @@ class FileInfoTest extends TestCase
             /* Neither is a control character, so both survive */
             75 => ["caf\u{00E9}", 'txt', "caf\u{00E9}.txt"],
             76 => ["10\u{20AC}", 'txt', "10\u{20AC}.txt"],
+
+            /* A backslash is a character in the name, not a separator, on every platform.
+               `pathinfo()` splits on it under Windows and not under POSIX, so these came back
+               as `b` and `windows-win` respectively until `Filename::splitNameAndExtension()`
+               took the split over. A forward slash *is* a separator on both. */
+            82 => ['a-b', 'txt', 'a\b.txt'],
+            83 => ['windows-win', 'ini', '..\..\windows\win.ini'],
+            84 => ['b', 'txt', 'a/b.txt'],
+            85 => ['passwd', '', '../../etc/passwd'],
         ];
     }
 

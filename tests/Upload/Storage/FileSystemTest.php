@@ -718,14 +718,40 @@ class FileSystemTest extends TestCase
     }
 
     /**
+     * The two cases carrying control characters, which NTFS refuses in a filename outright —
+     * `touch()` cannot create the colliding file, so there is nothing for the reservation to
+     * find in the way. Split out and grouped rather than skipped, since a data set cannot
+     * carry a group of its own.
+     *
+     * @dataProvider providerNamesWithControlCharactersASeamMayReturn
+     *
+     * @group posix
+     */
+    public function testCollisionMessageSanitizesControlCharactersInTheNameItQuotes(
+        string $name,
+        string $message
+    ): void {
+        $this->testCollisionMessageSanitizesTheNameItQuotes($name, $message);
+    }
+
+    /**
+     * @return array<string, array<int, string>>
+     */
+    public function providerNamesWithControlCharactersASeamMayReturn(): array
+    {
+        return [
+            'controls collapsed' => ["report\x07\x08.txt", 'A file named "report .txt" already exists'],
+            'nothing but controls' => ["\x01\x02", 'A file with that name already exists'],
+        ];
+    }
+
+    /**
      * @return array<string, array<int, string>>
      */
     public function providerNamesAnOverriddenSeamMayReturn(): array
     {
         return [
-            'controls collapsed' => ["report\x07\x08.txt", 'A file named "report .txt" already exists'],
             'bidi deleted' => ["resume\xE2\x80\xAEtxt.gpj", 'A file named "resumetxt.gpj" already exists'],
-            'nothing but controls' => ["\x01\x02", 'A file with that name already exists'],
         ];
     }
 
@@ -789,7 +815,7 @@ class FileSystemTest extends TestCase
         $storage = $this->makeStorage($workingDirectory, true);
 
         $this->assertSame(
-            $workingDirectory . '/report.txt',
+            $this->destinationOf($workingDirectory, 'report.txt'),
             $storage->upload($this->makeHostileFileInfo('report.txt. '))
         );
     }
@@ -1117,6 +1143,19 @@ class FileSystemTest extends TestCase
     /**
      * A scratch directory that is removed again in tear_down()
      */
+    /**
+     * The path `upload()` will return for a name stored in this directory
+     *
+     * It composes that as `$this->directory . $filename`, and the constructor ends the
+     * directory with `DIRECTORY_SEPARATOR`. These tests build their working directory with
+     * `/`, which PHP treats as the same path on Windows but is not the same *string* — so an
+     * assertion joining with `/` fails there against a file that was stored correctly.
+     */
+    protected function destinationOf(string $directory, string $filename): string
+    {
+        return $directory . DIRECTORY_SEPARATOR . $filename;
+    }
+
     protected function makeWorkingDirectory(): string
     {
         $workingDirectory = sys_get_temp_dir() . '/upload-test-' . uniqid('', true) . '/uploads';
@@ -1163,7 +1202,7 @@ class FileSystemTest extends TestCase
         $workingDirectory = $this->makeWorkingDirectory();
         $storage = $this->makeStorage($workingDirectory, true);
 
-        $this->assertSame($workingDirectory . '/' . $stored, $storage->upload($fileInfo));
+        $this->assertSame($this->destinationOf($workingDirectory, $stored), $storage->upload($fileInfo));
         $this->assertFileExists($workingDirectory . '/' . $stored);
     }
 
@@ -1284,7 +1323,7 @@ class FileSystemTest extends TestCase
         $storage = $this->makeStorage($workingDirectory, true);
 
         $this->assertSame(
-            $workingDirectory . '/foo.txt',
+            $this->destinationOf($workingDirectory, 'foo.txt'),
             $storage->upload(new FileInfo($this->assetsDirectory . '/foo.txt', 'foo.txt'))
         );
         $this->assertSame($workingDirectory, $storage->getDirectory());
@@ -1460,7 +1499,7 @@ class FileSystemTest extends TestCase
 
         $this->assertSame([], $storage->getBlockedExtensions());
         $this->assertSame(
-            $workingDirectory . '/shell.php',
+            $this->destinationOf($workingDirectory, 'shell.php'),
             $storage->upload($this->makeHostileFileInfo('shell.php'))
         );
     }

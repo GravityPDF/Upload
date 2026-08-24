@@ -7,3 +7,7 @@
 /phpunit.xml    export-ignore
 /phpstan.neon   export-ignore
 /CLAUDE.md      export-ignore
+
+# The catalogue's exact bytes are a guarantee: the `i18n` workflow regenerates it and fails on
+# a diff, and `CatalogueTest` parses it line by line. A CRLF checkout on Windows breaks both.
+/i18n/upload.pot text eol=lf
