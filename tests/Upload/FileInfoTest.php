@@ -155,6 +155,18 @@ class FileInfoTest extends TestCase
                between the two bytes of the character at 250. The polyfill ships no
                `mb_strcut()`, so the cut is a byte cut there and left a partial sequence. */
             [str_repeat('a', 249), 'jpeg', str_repeat('a', 249) . "\u{00E9}" . str_repeat('b', 40) . '.jpeg'],
+
+            /* Every offset at which a wider character can straddle that cut. A 3-byte
+               character can be left with one or two bytes and a 4-byte one with up to three,
+               and `forceValidUtf8()` matches an incomplete tail with a branch per width — so
+               one 2-byte case above exercised one of the three. The character is dropped
+               whole either way: `mb_strcut()` refuses to split it, and on the polyfill the
+               byte cut splits it and the repair takes the remainder off. */
+            [str_repeat('a', 248), 'jpeg', str_repeat('a', 248) . "\u{6587}" . str_repeat('b', 40) . '.jpeg'],
+            [str_repeat('a', 249), 'jpeg', str_repeat('a', 249) . "\u{6587}" . str_repeat('b', 40) . '.jpeg'],
+            [str_repeat('a', 247), 'jpeg', str_repeat('a', 247) . "\u{20B9F}" . str_repeat('b', 40) . '.jpeg'],
+            [str_repeat('a', 248), 'jpeg', str_repeat('a', 248) . "\u{20B9F}" . str_repeat('b', 40) . '.jpeg'],
+            [str_repeat('a', 249), 'jpeg', str_repeat('a', 249) . "\u{20B9F}" . str_repeat('b', 40) . '.jpeg'],
         ];
     }
 
@@ -277,6 +289,38 @@ class FileInfoTest extends TestCase
             /* Neither is a control character, so both survive */
             75 => ["caf\u{00E9}", 'txt', "caf\u{00E9}.txt"],
             76 => ["10\u{20AC}", 'txt', "10\u{20AC}.txt"],
+
+            /* Scripts that carry no ASCII at all, so nothing in the name is left for the
+               rewriting to key on. The first mixes them with the punctuation it does rewrite,
+               which is the shape a client name off a CJK desktop actually arrives in. */
+            82 => ["\u{804A}\u{5929}-PC-201711201615", 'xlsx', "\u{804A}\u{5929}(PC)-201711201615.xlsx"],
+            83 => ["\u{30D5}\u{30A1}\u{30A4}\u{30EB}\u{540D}", 'txt', "\u{30D5}\u{30A1}\u{30A4}\u{30EB}\u{540D}.txt"],
+            84 => ["\u{D30C}\u{C77C}\u{C774}\u{B984}", 'txt', "\u{D30C}\u{C77C}\u{C774}\u{B984}.txt"],
+
+            /* Four-byte characters: CJK Extension B, and the plane the emoji live on. Nothing
+               above 3 bytes reached the name until these, so the widest sequence the encoding
+               repair has a branch for was never one this layer had produced. */
+            85 => ["\u{20B9F}\u{2A6B2}", 'txt', "\u{20B9F}\u{2A6B2}.txt"],
+            86 => ["photo\u{1F600}", 'png', "photo\u{1F600}.png"],
+
+            /* An extension is ASCII alphanumeric or it is discarded whole, whatever script the
+               name beside it is in */
+            87 => ["\u{6587}\u{5B57}-v2", '', "\u{6587}\u{5B57}(v2).\u{6587}"],
+
+            /* A character ending exactly on the 250 byte budget is kept whole. The straddling
+               cases sit in the mbstring provider because only they need the repair; these cut
+               on a boundary, so a byte cut reaches the same answer and every configuration
+               runs them. */
+            88 => [
+                str_repeat('a', 247) . "\u{6587}",
+                'jpeg',
+                str_repeat('a', 247) . "\u{6587}" . str_repeat('b', 40) . '.jpeg',
+            ],
+            89 => [
+                str_repeat('a', 246) . "\u{20B9F}",
+                'jpeg',
+                str_repeat('a', 246) . "\u{20B9F}" . str_repeat('b', 40) . '.jpeg',
+            ],
         ];
     }
 
