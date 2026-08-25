@@ -1966,6 +1966,43 @@ class FileTest extends TestCase
     }
 
     /**
+     * The other two `final` groups, both of which fail quietly rather than loudly when a
+     * subclass replaces one: the failure it should have reported never appears in
+     * `getErrors()`, and nothing says so.
+     *
+     * @dataProvider provideMethodsThatAreNotSeams
+     */
+    public function testAMethodThatIsNotASeamIsFinal(string $method, string $reason): void
+    {
+        $this->assertTrue(
+            (new \ReflectionMethod(File::class, $method))->isFinal(),
+            $method . '() must stay final: ' . $reason
+        );
+    }
+
+    /** @return array<string,array{string,string}> */
+    public function provideMethodsThatAreNotSeams(): array
+    {
+        /* `guardPropertyAccess()` is private, so these four are the only route to it. A
+           subclass overriding one to give itself magic properties drops the guard, and
+           `$this->errors = [...]` goes back to landing where nothing reads it. */
+        $guard = 'an override of it removes the guard on the replaced property names';
+
+        /* `protected` so `FileList::__construct()` can call it, not so a subclass can replace
+           it: an override skipping the parent leaves `guardAgainstReplacedMembers()` unrun and
+           `isValid()` with no snapshot to reset to. */
+        $tail = 'an override of it skips the invariant both constructors share';
+
+        return [
+            '__get' => ['__get', $guard],
+            '__set' => ['__set', $guard],
+            '__isset' => ['__isset', $guard],
+            '__unset' => ['__unset', $guard],
+            'init' => ['init', $tail],
+        ];
+    }
+
+    /**
      * `$this->errors[] = $message` was the 3.x way to record a failure. The property is gone,
      * so the append writes somewhere nothing reads: `getErrors()` never shows the failure, and
      * before PHP 8.2 the write is silent. An append is a read, and `empty($this->errors)` is

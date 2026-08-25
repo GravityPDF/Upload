@@ -232,6 +232,12 @@ still `protected`, which now takes the message and the filename separately:
 `Validation\Size::scale()` is new, and the seam for the one question the wording leaves open:
 it names the unit and formats the number, decimal separator included.
 
+`File::init()` and the four magic property methods — `__get()`, `__set()`, `__isset()`,
+`__unset()` — are new in 4.0.0 and `final`. `init()` is the tail both constructors share, so
+constructor work of your own goes in your own `__construct()`; the four are the only route to
+the guard that refuses the replaced names above, so declare a property of your own rather than
+making it magic.
+
 **Other changes:**
 
 * `blockExtensions()` called with no argument no longer means the default list: pass

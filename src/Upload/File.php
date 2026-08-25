@@ -254,11 +254,12 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      * input produces and the two read entirely different inputs.
      *
      * `protected` only so `FileList::__construct()` can call it — a `private` method of this
-     * class is out of reach from a subclass's own constructor. It is not an extension seam:
-     * overriding it without snapshotting the errors costs `isValid()` its idempotence, since
-     * that is the list it resets to.
+     * class is out of reach from a subclass's own constructor. `final` because it is not an
+     * extension seam. An override that skips the snapshot costs `isValid()` its idempotence,
+     * since that is the list it resets to; one that skips `guardAgainstReplacedMembers()`
+     * leaves a subclass free to declare `$errors`.
      */
-    protected function init(StorageInterface $storage): void
+    final protected function init(StorageInterface $storage): void
     {
         $this->guardAgainstReplacedMembers();
 
@@ -605,10 +606,15 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      * `$this->errors[] = $message` was how a 3.x subclass recorded a failure. An append is a
      * read, not a write, so it arrives here rather than at `__set()`.
      *
+     * `final`, as the other three are. `guardPropertyAccess()` is `private`, so these four are
+     * the only way the guard is reached: a subclass overriding one to give itself magic
+     * properties drops it without a diagnostic, and `$this->errors = [...]` goes back to
+     * landing where nothing reads it.
+     *
      * @return mixed
      * @throws LogicException If the property is one this class declares or has replaced
      */
-    public function __get(string $name)
+    final public function __get(string $name)
     {
         $this->guardPropertyAccess($name);
 
@@ -627,10 +633,12 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      * with `Indirect modification of overloaded property`, so a subclass with array state of
      * its own has to declare the property rather than let a first append create it.
      *
+     * `final` for the reason `__get()` gives.
+     *
      * @param mixed $value
      * @throws LogicException If the property is one this class declares or has replaced
      */
-    public function __set(string $name, $value): void
+    final public function __set(string $name, $value): void
     {
         $this->guardPropertyAccess($name);
 
@@ -643,9 +651,11 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      * `if (empty($this->errors))` was the 3.x way to ask whether anything had failed. Without
      * this it answers `true` on a collection that rejected every file.
      *
+     * `final` for the reason `__get()` gives.
+     *
      * @throws LogicException If the property is one this class declares or has replaced
      */
-    public function __isset(string $name): bool
+    final public function __isset(string $name): bool
     {
         $this->guardPropertyAccess($name);
 
@@ -655,9 +665,11 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     /**
      * Refuse an `unset()` of a property this class does not expose
      *
+     * `final` for the reason `__get()` gives.
+     *
      * @throws LogicException If the property is one this class declares or has replaced
      */
-    public function __unset(string $name): void
+    final public function __unset(string $name): void
     {
         $this->guardPropertyAccess($name);
     }
