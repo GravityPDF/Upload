@@ -1950,6 +1950,177 @@ class FileTest extends TestCase
         }
     }
 
+    /**
+     * A subclass that overrode one of these was calling code `upload()` no longer routes
+     * through, and a check it added stopped running with nothing said. `final` makes that a
+     * fatal error when the subclass is loaded.
+     */
+    public function testTheEntryPointsCannotBeOverridden(): void
+    {
+        foreach (['isValid', 'upload', 'uploadValid'] as $method) {
+            $this->assertTrue(
+                (new \ReflectionMethod(File::class, $method))->isFinal(),
+                $method . '() must stay final: an override of it does not run'
+            );
+        }
+    }
+
+    /**
+     * `$this->errors[] = $message` was the 3.x way to record a failure. The property is gone,
+     * so the append writes somewhere nothing reads: `getErrors()` never shows the failure, and
+     * before PHP 8.2 the write is silent. An append is a read, and `empty($this->errors)` is
+     * an `isset()`, which is why all four routes are covered: left to PHP that last one answers
+     * `true` on a collection that rejected every file.
+     *
+     * @dataProvider provideErrorListAccess
+     */
+    public function testAnErrorListIsUnreachableFromASubclass(string $property, string $access): void
+    {
+        $file = new PropertyProbeFile('single', $this->storage);
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('recordError()');
+
+        $file->$access($property, 'rejected');
+    }
+
+    /**
+     * The two names 3.x published and the two `private` ones that replaced them, by each of the
+     * four routes to them: a subclass that found the new names by reading the source is in the
+     * same position as one still using the old.
+     *
+     * @return array<string,array<int,string>>
+     */
+    public function provideErrorListAccess(): array
+    {
+        $cases = [];
+
+        foreach (['errors', 'constructorErrors', 'errorDetails', 'constructorErrorDetails'] as $property) {
+            foreach (['append', 'assign', 'read', 'isEmpty'] as $access) {
+                $cases[$property . ': ' . $access] = [$property, $access];
+            }
+        }
+
+        return $cases;
+    }
+
+    /**
+     * `__set()` runs in `File`'s scope, so without a guard covering everything the class keeps
+     * to itself, a subclass assigning to `$running` by name would take the re-entrancy lock
+     * rather than create a dynamic property of its own.
+     */
+    public function testThePrivateLockIsNotReachableByName(): void
+    {
+        $file = new PropertyProbeFile('single', $this->storage);
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('not accessible here');
+
+        $file->assign('running', true);
+    }
+
+    /**
+     * `UPGRADE.md`'s seam table tells a 3.x subclass which overrides still hold. A row promising
+     * a method survived is a promise it is neither `final` nor `private`, and a row in the left
+     * column is a promise that the member it names really is gone.
+     *
+     * The table is read at run time rather than copied, as
+     * `FileSystemTest::testReadmeDocumentsTheDefaultDenyList()` reads the README's deny-list:
+     * copied, the two drifted apart in the commit that introduced them.
+     */
+    public function testTheSeamsTheUpgradeGuideNamesAreStillOverridable(): void
+    {
+        /* Git checks the document out with CRLF on Windows, where the blank line the table
+           starts after is "\r\n\r\n" and the pattern below would find nothing */
+        $upgrade = str_replace("\r\n", "\n", (string)file_get_contents(dirname(__DIR__, 2) . '/UPGRADE.md'));
+
+        if (preg_match('/What is still a seam, and what is not[^\n]*\n\n((?:\|.*\n)+)/', $upgrade, $table) !== 1) {
+            $this->fail('UPGRADE.md no longer has a "What is still a seam, and what is not" table');
+        }
+
+        /* The rows promising the method is still there, as opposed to those naming a replacement */
+        preg_match_all('/^\| `([A-Za-z]+)::([A-Za-z]+)\(\)` \| Still /m', $table[1], $rows, PREG_SET_ORDER);
+
+        $this->assertNotEmpty($rows, 'The seam table no longer promises that anything is still a seam');
+
+        $classes = [
+            'File' => File::class,
+            'FileInfo' => FileInfo::class,
+            'FileSystem' => FileSystem::class,
+        ];
+
+        foreach ($rows as [, $class, $method]) {
+            $this->assertArrayHasKey($class, $classes, $class . ' is named in the seam table but not known here');
+
+            $reflection = new \ReflectionMethod($classes[$class], $method);
+
+            $this->assertFalse($reflection->isFinal(), $class . '::' . $method . '() must stay overridable');
+            $this->assertFalse($reflection->isPrivate(), $class . '::' . $method . '() must stay reachable');
+        }
+
+        foreach (['errors', 'constructorErrors', 'errorCodeMessages'] as $member) {
+            $this->assertFalse(
+                property_exists(File::class, $member),
+                'File::$' . $member . ' is documented as gone'
+            );
+        }
+    }
+
+    /**
+     * A declared property is in scope, so it never reaches the magic accessors: a subclass
+     * carrying its own `$errors` records into that and `getErrors()` answers with none, which
+     * is the 3.x bypass in full. A static never dispatches to a magic method at all, which is
+     * what leaves `$errorCodeMessages` to the construction-time check alone.
+     */
+    public function testASubclassDeclaringAReplacedMemberIsRefused(): void
+    {
+        $subclasses = [
+            'errors' => function (): File {
+                return new class ('single', $this->storage) extends File {
+                    /** @var string[] */
+                    protected $errors = [];
+                };
+            },
+            'errorDetails' => function (): File {
+                return new class ('single', $this->storage) extends File {
+                    /** @var mixed[] */
+                    protected $errorDetails = [];
+                };
+            },
+            'errorCodeMessages' => function (): File {
+                return new class ('single', $this->storage) extends File {
+                    /** @var string[] */
+                    protected static $errorCodeMessages = [];
+                };
+            },
+        ];
+
+        foreach ($subclasses as $member => $construct) {
+            try {
+                $construct();
+                $this->fail('a subclass declaring $' . $member . ' should have been refused');
+            } catch (\LogicException $e) {
+                $this->assertStringContainsString('$' . $member, $e->getMessage());
+            }
+        }
+    }
+
+    /**
+     * Any other property name is left where it was: a subclass with state of its own is not
+     * what the guard is for.
+     *
+     * Silenced because the write creates a dynamic property, which PHP 8.2 deprecates with or
+     * without this guard and `phpunit.xml` turns into a failure.
+     */
+    public function testAnotherPropertyIsUntouched(): void
+    {
+        $file = new PropertyProbeFile('single', $this->storage);
+
+        @$file->assign('tenantId', 7);
+
+        $this->assertSame(7, $file->read('tenantId'));
+    }
+
     /** @return array<string,array<int,int|string>> */
     public function provideClassesThatRecordErrors(): array
     {

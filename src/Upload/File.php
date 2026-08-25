@@ -40,6 +40,7 @@ use BadMethodCallException;
 use InvalidArgumentException;
 use LogicException;
 use IteratorAggregate;
+use ReflectionClass;
 use RuntimeException;
 
 /**
@@ -72,6 +73,19 @@ use RuntimeException;
  */
 class File implements ArrayAccess, IteratorAggregate, Countable
 {
+    /** What replaced the four error lists, named in the exception each of them now raises */
+    private const ERROR_LIST_REPLACEMENT =
+        'recordError() to record a failure, and getErrors() or getErrorDetails() to read';
+
+    /** The members 4.0.0 removed or made `private`, against what a subclass should use instead */
+    private const REPLACED_MEMBERS = [
+        'errors' => self::ERROR_LIST_REPLACEMENT,
+        'constructorErrors' => self::ERROR_LIST_REPLACEMENT,
+        'errorDetails' => self::ERROR_LIST_REPLACEMENT,
+        'constructorErrorDetails' => self::ERROR_LIST_REPLACEMENT,
+        'errorCodeMessages' => 'the getUploadErrorMessages() method',
+    ];
+
     /** The four lifecycle hooks `applyCallback()` will fire, as the property names holding them */
     private const LIFECYCLE_CALLBACKS = [
         'beforeValidationCallback',
@@ -236,16 +250,18 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      * control-character filter. **Anything every constructor has to do belongs here.**
      *
      * It owns the two members neither constructor should set for itself. `$objects` and
-     * `$errors` are still filled in by each constructor, since they are what reading the
+     * `$errorDetails` are still filled in by each constructor, since they are what reading the
      * input produces and the two read entirely different inputs.
      *
      * `protected` only so `FileList::__construct()` can call it — a `private` method of this
      * class is out of reach from a subclass's own constructor. It is not an extension seam:
-     * overriding it without snapshotting `$errors` costs `isValid()` its idempotence, since
+     * overriding it without snapshotting the errors costs `isValid()` its idempotence, since
      * that is the list it resets to.
      */
     protected function init(StorageInterface $storage): void
     {
+        $this->guardAgainstReplacedMembers();
+
         $this->constructorErrorDetails = $this->errorDetails;
         $this->storage = $storage;
     }
@@ -584,6 +600,151 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     }
 
     /**
+     * Answer a read of a property this class does not expose
+     *
+     * `$this->errors[] = $message` was how a 3.x subclass recorded a failure. An append is a
+     * read, not a write, so it arrives here rather than at `__set()`.
+     *
+     * @return mixed
+     * @throws LogicException If the property is one this class declares or has replaced
+     */
+    public function __get(string $name)
+    {
+        $this->guardPropertyAccess($name);
+
+        /* PHP's own answer for a property that was never declared. It raises this as a notice
+           before PHP 8.0 and as a warning after; one severity is reported across the range. */
+        trigger_error('Undefined property: ' . static::class . '::$' . $name, E_USER_WARNING);
+
+        return null;
+    }
+
+    /**
+     * Take a write to a property this class does not expose
+     *
+     * A name this class knows nothing about is created, as it was before these methods existed.
+     * An **append** to such a name is not: PHP calls `__get()` for that and discards the write
+     * with `Indirect modification of overloaded property`, so a subclass with array state of
+     * its own has to declare the property rather than let a first append create it.
+     *
+     * @param mixed $value
+     * @throws LogicException If the property is one this class declares or has replaced
+     */
+    public function __set(string $name, $value): void
+    {
+        $this->guardPropertyAccess($name);
+
+        $this->$name = $value;
+    }
+
+    /**
+     * Answer `isset()`/`empty()` for a property this class does not expose
+     *
+     * `if (empty($this->errors))` was the 3.x way to ask whether anything had failed. Without
+     * this it answers `true` on a collection that rejected every file.
+     *
+     * @throws LogicException If the property is one this class declares or has replaced
+     */
+    public function __isset(string $name): bool
+    {
+        $this->guardPropertyAccess($name);
+
+        return false;
+    }
+
+    /**
+     * Refuse an `unset()` of a property this class does not expose
+     *
+     * @throws LogicException If the property is one this class declares or has replaced
+     */
+    public function __unset(string $name): void
+    {
+        $this->guardPropertyAccess($name);
+    }
+
+    /**
+     * Refuse a subclass the members this class keeps to itself
+     *
+     * `$errors` and `$constructorErrors` were `protected` until 4.0.0. A subclass still using
+     * either name touches a dynamic property nothing reads, so the failure it recorded never
+     * reaches `getErrors()` — and before PHP 8.2 not even a deprecation is raised.
+     * `$errorDetails` and `$constructorErrorDetails` replaced them and are `private`, which is
+     * why the names it might have found in the source are refused as well.
+     *
+     * The `property_exists()` arm covers the rest of what this class declares `private`,
+     * `$running` among them: these methods run in `File`'s scope, so without it a subclass
+     * assigning to the re-entrancy lock by name would write the real one rather than a dynamic
+     * property of its own.
+     *
+     * @throws LogicException If the property is one this class declares or has replaced
+     */
+    private function guardPropertyAccess(string $name): void
+    {
+        if (isset(self::REPLACED_MEMBERS[$name])) {
+            throw new LogicException(sprintf(
+                'File::$%s is not accessible to a subclass. Use %s.',
+                $name,
+                self::REPLACED_MEMBERS[$name]
+            ));
+        }
+
+        if (property_exists($this, $name)) {
+            throw new LogicException(sprintf('File::$%s is not accessible here.', $name));
+        }
+    }
+
+    /**
+     * Refuse a subclass that declares one of the members 4.0.0 replaced
+     *
+     * A declared property is in scope, so it never reaches `__get()`/`__set()`: a subclass
+     * carrying `protected $errors` records every failure into its own array and `getErrors()`
+     * answers with none, which is the 3.x silent bypass this class otherwise closes. A static
+     * never dispatches to a magic method at all, which is what leaves `$errorCodeMessages`
+     * here and nowhere else.
+     *
+     * At construction rather than at the touch, so the report does not depend on the subclass
+     * reaching that line. The answer is per class rather than per instance, and `File` itself
+     * declares two of these names, so neither walk runs for it.
+     *
+     * @throws LogicException If a subclass declares one of them
+     */
+    private function guardAgainstReplacedMembers(): void
+    {
+        /** @var array<string,bool> $cleared Classes already walked */
+        static $cleared = [];
+
+        $class = static::class;
+
+        if ($class === self::class || isset($cleared[$class]) === true) {
+            return;
+        }
+
+        $reflection = new ReflectionClass($class);
+
+        while ($reflection !== false && $reflection->getName() !== self::class) {
+            foreach (self::REPLACED_MEMBERS as $name => $replacement) {
+                /* Declared by this class rather than inherited: `File`'s own two are `private`,
+                   which reflection does not report on a subclass at all */
+                if (
+                    $reflection->hasProperty($name) === true
+                    && $reflection->getProperty($name)->getDeclaringClass()->getName() === $reflection->getName()
+                ) {
+                    throw new LogicException(sprintf(
+                        '%s declares $%s, a name File replaced in 4.0.0 — nothing reads it. Use %s.',
+                        $reflection->getName(),
+                        $name,
+                        $replacement
+                    ));
+                }
+            }
+
+            $reflection = $reflection->getParentClass();
+        }
+
+        $cleared[$class] = true;
+    }
+
+    /**
      * Proxy an unknown method to the collection
      *
      * Returns a scalar for one file, an array for more than one and null for none. The
@@ -628,11 +789,13 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      * storage failure throws part-way through either, with `getUploadedLocators()` listing
      * what was already committed.
      *
+     * `final` for the reason `isValid()` gives.
+     *
      * @return bool
      * @throws Exception If validation fails, or if there is nothing to upload
      * @throws LogicException If nothing has been configured to validate against
      */
-    public function upload(): bool
+    final public function upload(): bool
     {
         $this->guardNotReentrant();
         $this->running = true;
@@ -672,12 +835,14 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      * was: a caller that abandons the request on `false` owns whatever is already on disk,
      * and `getUploadedLocators()` is the list to undo.
      *
+     * `final` for the reason `isValid()` gives.
+     *
      * @return bool True when every file was stored, false when at least one was rejected — a
      *              file that never transferred counts as rejected
      * @throws Exception If there is nothing to upload, or if storage fails
      * @throws LogicException If nothing has been configured to validate against
      */
-    public function uploadValid(): bool
+    final public function uploadValid(): bool
     {
         $this->guardNotReentrant();
         $this->running = true;
@@ -726,10 +891,10 @@ class File implements ArrayAccess, IteratorAggregate, Countable
     /**
      * Refuse a call that re-enters this object from one of its own lifecycle callbacks
      *
-     * A run owns `$errors` and `$uploadedFiles`: it resets both at the start, and decides from
-     * `$errors` which files to hand to storage. A nested call resets them underneath the run
-     * in progress, so a file that failed can end up in the set that is stored and the locator
-     * list can lose what was already written. The lock spans the storing as well as the
+     * A run owns `$errorDetails` and `$uploadedFiles`: it resets both at the start, and decides
+     * from `$errorDetails` which files to hand to storage. A nested call resets them underneath
+     * the run in progress, so a file that failed can end up in the set that is stored and the
+     * locator list can lose what was already written. The lock spans the storing as well as the
      * validating, since `afterUpload` fires after the validations have finished.
      *
      * A callback is given the `FileInfoInterface` it needs; calling back into the collection
@@ -810,10 +975,19 @@ class File implements ArrayAccess, IteratorAggregate, Countable
      * Re-runs every validation on every call rather than memoizing the result: `upload()`
      * calls this again, and a `setExtension()` in between must not skip revalidation.
      *
+     * `final`, as `upload()` and `uploadValid()` are. The three share one sequence — reset the
+     * error list to the constructor's, take the re-entrancy lock, derive the files that passed
+     * from what each iteration recorded — which a partial override breaks without saying so.
+     * Until 4.0.0 an override of this method also ran on every `upload()`; nothing calls it
+     * now. A check of your own belongs in a `ValidationInterface`, which all three run, and
+     * work either side of the storing in the `beforeUpload`/`afterUpload` callbacks. Both
+     * are handed one file at a time, so a check across the whole batch runs outside the
+     * collection.
+     *
      * @throws LogicException Unabsorbed from a validator: broken code, not a failed file
      * @throws \Throwable From a user callback
      */
-    public function isValid(): bool
+    final public function isValid(): bool
     {
         $this->guardNotReentrant();
         $this->running = true;
@@ -852,7 +1026,7 @@ class File implements ArrayAccess, IteratorAggregate, Countable
                tracked, so an error site added here cannot forget to mark the file failed and
                hand a rejected upload to storage. Taken before the first hook rather than
                after, so that guarantee covers the whole iteration and not just the part below
-               it: `$errors` is `protected`, so a subclass can record from either hook. */
+               it: `recordError()` is `protected`, so a subclass can record from either hook. */
             $errorCount = count($this->errorDetails);
 
             $this->applyCallback('beforeValidationCallback', $fileInfo);
