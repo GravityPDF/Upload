@@ -28,7 +28,7 @@ composer require gravitypdf/upload
 
 ### Requirements
 
-PHP 7.3 to 8.5 and `ext-fileinfo`. Optional but recommended: `ext-mbstring` (or `symfony/polyfill-mbstring`), which is what guarantees a sanitized filename is valid UTF-8 and lets truncation land on a character boundary. The same repair runs over the strings `getErrors()` returns, so without it neither is guaranteed and `json_encode()` can refuse a name that arrived as invalid UTF-8.
+PHP 7.3 to 8.6 and `ext-fileinfo`. Optional but recommended: `ext-mbstring` (or `symfony/polyfill-mbstring`), which is what guarantees a sanitized filename is valid UTF-8 and lets truncation land on a character boundary. The same repair runs over the strings `getErrors()` returns, so without it neither is guaranteed and `json_encode()` can refuse a name that arrived as invalid UTF-8.
 
 Migrating from `codeguy/upload`? Version 3.x of this package is a drop-in replacement:
 update your imports from `\Upload\…` to `\GravityPdf\Upload\…`.

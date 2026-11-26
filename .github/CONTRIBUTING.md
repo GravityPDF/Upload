@@ -22,7 +22,7 @@ and nothing else. That means it includes:
 * **What happened and what you expected**, as the return value, the `getErrors()` entries or
   the exception — not a description of them.
 * **The PHP version**, and whether `ext-mbstring` is loaded. Several behaviours differ across
-  the supported 7.3 to 8.5 range, and filename truncation differs without `mbstring`.
+  the supported 7.3 to 8.6 range, and filename truncation differs without `mbstring`.
 
 Security issues do not belong in the tracker. Report those privately through
 [GitHub's security advisories](https://github.com/GravityPDF/Upload/security/advisories/new).
@@ -80,7 +80,7 @@ Guidelines:
 Supported PHP versions
 -------------
 
-7.3 through 8.5, tested on all eight. Anything that will not parse on 7.3 cannot go in: no
+7.3 through 8.6, tested on all nine. Anything that will not parse on 7.3 cannot go in: no
 typed properties, no union types, no `mixed`, no arrow functions, no constructor promotion.
 Property and parameter types beyond what 7.3 allows live in docblocks.
 
