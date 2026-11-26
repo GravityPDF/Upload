@@ -233,8 +233,11 @@ final class Translation
             throw new RuntimeException($message);
         });
 
+        /* Through `call_user_func()` because PHPStan 2.2.15 and later model a direct
+           `vsprintf()` with a non-constant format as never throwing once the version range
+           reaches below 8.0, and report this catch as dead. */
         try {
-            return vsprintf($template, $args);
+            return call_user_func('vsprintf', $template, $args);
         } catch (Throwable $e) {
             return null;
         } finally {

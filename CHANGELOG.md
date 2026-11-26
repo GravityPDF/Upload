@@ -1,3 +1,7 @@
+# Unreleased
+
+* **PHP 8.6 is supported.** `composer.json` accepts `~8.6.0`, and CI runs the full matrix on it
+
 # Upload 4.0.0
 
 A security release. New protections are on by default and will refuse some uploads that 3.x accepted. [UPGRADE.md](https://github.com/GravityPDF/Upload/blob/main/UPGRADE.md) covers what to check.
