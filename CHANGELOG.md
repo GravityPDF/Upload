@@ -1,4 +1,4 @@
-# Unreleased
+# Upload 4.1.0
 
 * **PHP 8.6 is supported.** `composer.json` accepts `~8.6.0`, and CI runs the full matrix on it
 
